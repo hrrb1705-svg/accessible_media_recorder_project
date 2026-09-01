@@ -170,7 +170,6 @@ class _RecordTabState extends State<RecordTab> {
           _elapsedSeconds = 0;
         });
         _startElapsedTimer();
-        _snack('ضبط شروع شد');
       } catch (e) {
         setState(() => _state = _RecState.idle);
         _snack('خطا در شروع ضبط');
@@ -183,7 +182,6 @@ class _RecordTabState extends State<RecordTab> {
       await _recorder.pause();
       _stopElapsedTimer();
       setState(() => _state = _RecState.paused);
-      _snack('ضبط موقتاً متوقف شد');
     } catch (e) {
       _snack('خطا در توقف موقت');
     }
@@ -194,7 +192,6 @@ class _RecordTabState extends State<RecordTab> {
       await _recorder.resume();
       _startElapsedTimer();
       setState(() => _state = _RecState.recording);
-      _snack('ضبط ادامه یافت');
     } catch (e) {
       _snack('خطا در ادامه ضبط');
     }
@@ -213,10 +210,9 @@ class _RecordTabState extends State<RecordTab> {
   Future<void> _save() async {
     if (_tempFile == null) return;
     final ext = _tempFile!.split('.').last;
-    final defaultName =
-        'rec_${DateTime.now().millisecondsSinceEpoch}.$ext';
-    final controller = TextEditingController(text: defaultName);
-    final chosen = await showDialog<String>(
+    final defaultBase = 'rec_${DateTime.now().millisecondsSinceEpoch}';
+    final controller = TextEditingController(text: defaultBase);
+    final chosenBase = await showDialog<String>(
       context: context,
       builder: (ctx) {
         return AlertDialog(
@@ -224,7 +220,10 @@ class _RecordTabState extends State<RecordTab> {
           content: TextField(
             controller: controller,
             autofocus: true,
-            decoration: const InputDecoration(labelText: 'نام فایل'),
+            decoration: InputDecoration(
+              labelText: 'نام فایل',
+              helperText: 'پسوند فایل (.${ext}) خودکار اضافه می‌شود و ثابت است',
+            ),
           ),
           actions: [
             TextButton(
@@ -239,7 +238,8 @@ class _RecordTabState extends State<RecordTab> {
         );
       },
     );
-    if (chosen == null || chosen.isEmpty) return;
+    if (chosenBase == null || chosenBase.isEmpty) return;
+    final chosen = '$chosenBase.$ext';
 
     final granted = await Permission.manageExternalStorage.request();
     if (!granted.isGranted) {
@@ -306,85 +306,96 @@ class _RecordTabState extends State<RecordTab> {
     final canFinish =
         _state == _RecState.recording || _state == _RecState.paused;
     final canSave = _state == _RecState.finished;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Semantics(
-              label: 'انتخاب نوع ضبط: صدا یا تصویر',
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          Semantics(
+            label: 'انتخاب نوع ضبط: صدا یا تصویر',
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Radio<bool>(
+                  value: false,
+                  groupValue: _isVideo,
+                  onChanged: _state == _RecState.idle
+                      ? (v) => setState(() => _isVideo = v ?? false)
+                      : null,
+                ),
+                const Text('صدا'),
+                const SizedBox(width: 24),
+                Radio<bool>(
+                  value: true,
+                  groupValue: _isVideo,
+                  onChanged: _state == _RecState.idle
+                      ? (v) => setState(() => _isVideo = v ?? true)
+                      : null,
+                ),
+                const Text('تصویر'),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Center(
               child: Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  RadioListTile<bool>(
-                    value: false,
-                    groupValue: _isVideo,
-                    onChanged: _state == _RecState.idle
-                        ? (v) => setState(() => _isVideo = v ?? false)
-                        : null,
-                    title: const Text('صدا'),
-                  ),
-                  RadioListTile<bool>(
-                    value: true,
-                    groupValue: _isVideo,
-                    onChanged: _state == _RecState.idle
-                        ? (v) => setState(() => _isVideo = v ?? true)
-                        : null,
-                    title: const Text('تصویر'),
-                  ),
+                  if (_state == _RecState.waiting)
+                    Text('ضبط تا $_countdown ثانیه دیگر شروع می‌شود…',
+                        style: Theme.of(context).textTheme.titleMedium),
+                  if (_state == _RecState.recording ||
+                      _state == _RecState.paused)
+                    Semantics(
+                      label: 'زمان سپری شده ضبط: ${_formatElapsed()}',
+                      child: Text(
+                        _formatElapsed(),
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                    ),
+                  // این فضا برای پیش‌نمایش تصویر در حین ضبط ویدیو در نظر گرفته شده است
                 ],
               ),
             ),
-            const SizedBox(height: 16),
-            if (_state == _RecState.waiting)
-              Text('ضبط تا $_countdown ثانیه دیگر شروع می‌شود…',
-                  style: Theme.of(context).textTheme.titleMedium),
-            if (_state == _RecState.recording || _state == _RecState.paused)
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
               Semantics(
-                label: 'زمان سپری شده ضبط: ${_formatElapsed()}',
-                child: Text(
-                  _formatElapsed(),
-                  style: Theme.of(context).textTheme.headlineSmall,
+                label:
+                    '${_mainButtonLabel()}. با کلید کاهش صدای گوشی هم می‌توان همین کار را انجام داد',
+                button: true,
+                child: FilledButton.icon(
+                  icon: Icon(_state == _RecState.recording
+                      ? Icons.pause
+                      : Icons.fiber_manual_record),
+                  label: Text(_mainButtonLabel()),
+                  onPressed: _state == _RecState.waiting ||
+                          _state == _RecState.finished
+                      ? null
+                      : _mainButtonPressed,
                 ),
               ),
-            const SizedBox(height: 16),
-            Semantics(
-              label:
-                  '${_mainButtonLabel()}. با کلید کاهش صدای گوشی هم می‌توان همین کار را انجام داد',
-              button: true,
-              child: FilledButton.icon(
-                icon: Icon(_state == _RecState.recording
-                    ? Icons.pause
-                    : Icons.fiber_manual_record),
-                label: Text(_mainButtonLabel()),
-                onPressed: _state == _RecState.waiting ||
-                        _state == _RecState.finished
-                    ? null
-                    : _mainButtonPressed,
+              Semantics(
+                label: 'پایان کامل ضبط',
+                button: true,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.stop_circle),
+                  label: const Text('پایان ضبط'),
+                  onPressed: canFinish ? _finish : null,
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            Semantics(
-              label: 'پایان کامل ضبط',
-              button: true,
-              child: OutlinedButton.icon(
-                icon: const Icon(Icons.stop_circle),
-                label: const Text('پایان ضبط'),
-                onPressed: canFinish ? _finish : null,
+              Semantics(
+                label: 'ذخیره فایل ضبط شده در پوشه اکسی رک',
+                button: true,
+                child: FilledButton.icon(
+                  icon: const Icon(Icons.save),
+                  label: const Text('ذخیره'),
+                  onPressed: canSave ? _save : null,
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            Semantics(
-              label: 'ذخیره فایل ضبط شده در پوشه اکسی رک',
-              button: true,
-              child: FilledButton.icon(
-                icon: const Icon(Icons.save),
-                label: const Text('ذخیره'),
-                onPressed: canSave ? _save : null,
-              ),
-            ),
-          ],
-        ),
+            ],
+          ),
+        ],
       ),
     );
   }
