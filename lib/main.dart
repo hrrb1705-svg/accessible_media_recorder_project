@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:file_picker/file_picker.dart';
@@ -61,7 +63,7 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-/// تب ضبط: انتخاب صدا/تصویر، شروع با ۳ ثانیه تأخیر، توقف، و افزودن فایل.
+/// تب ضبط: انتخاب صدا/تصویر، شروع با ۳ ثانیه تأخیر، مکث و ادامه با کلید صدا یا دکمه، توقف کامل، و ذخیره در پوشه.
 class RecordTab extends StatefulWidget {
   const RecordTab({super.key});
 
@@ -69,18 +71,34 @@ class RecordTab extends StatefulWidget {
   State<RecordTab> createState() => _RecordTabState();
 }
 
+enum _RecState { idle, waiting, recording, paused, finished }
+
 class _RecordTabState extends State<RecordTab> {
+  static const MethodChannel _volumeChannel = MethodChannel('acc_rec/volume_keys');
+
   final AudioRecorder _recorder = AudioRecorder();
   bool _isVideo = false; // false = صدا، true = تصویر
-  bool _recording = false;
-  bool _waiting = false;
+  _RecState _state = _RecState.idle;
   int _countdown = 3;
-  Timer? _timer;
-  String? _lastFile;
+  Timer? _countdownTimer;
+  Timer? _elapsedTimer;
+  int _elapsedSeconds = 0;
+  String? _tempFile;
+
+  @override
+  void initState() {
+    super.initState();
+    _volumeChannel.setMethodCallHandler((call) async {
+      if (call.method == 'volumeKeyPressed') {
+        await _toggleFromVolumeKey();
+      }
+    });
+  }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _countdownTimer?.cancel();
+    _elapsedTimer?.cancel();
     _recorder.dispose();
     super.dispose();
   }
@@ -88,6 +106,40 @@ class _RecordTabState extends State<RecordTab> {
   Future<bool> _ensurePermission() async {
     final p = _isVideo ? Permission.camera : Permission.microphone;
     return await p.request().isGranted;
+  }
+
+  String _formatElapsed() {
+    final m = (_elapsedSeconds ~/ 60).toString().padLeft(2, '0');
+    final s = (_elapsedSeconds % 60).toString().padLeft(2, '0');
+    return '$m:$s';
+  }
+
+  void _startElapsedTimer() {
+    _elapsedTimer?.cancel();
+    _elapsedTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      setState(() => _elapsedSeconds++);
+    });
+  }
+
+  void _stopElapsedTimer() {
+    _elapsedTimer?.cancel();
+  }
+
+  Future<void> _toggleFromVolumeKey() async {
+    switch (_state) {
+      case _RecState.idle:
+        await _startWithDelay();
+        break;
+      case _RecState.recording:
+        await _pause();
+        break;
+      case _RecState.paused:
+        await _resume();
+        break;
+      case _RecState.waiting:
+      case _RecState.finished:
+        break;
+    }
   }
 
   Future<void> _startWithDelay() async {
@@ -100,50 +152,115 @@ class _RecordTabState extends State<RecordTab> {
     final path =
         '${dir.path}/rec_${DateTime.now().millisecondsSinceEpoch}.$ext';
     setState(() {
-      _waiting = true;
+      _state = _RecState.waiting;
       _countdown = 3;
     });
-    _timer = Timer.periodic(const Duration(seconds: 1), (t) async {
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (t) async {
       if (_countdown > 1) {
         setState(() => _countdown--);
         return;
       }
       t.cancel();
       try {
-        if (_isVideo) {
-          // ضبط تصویر از طریق record در دسترس نیست؛ فایل صوتی خالی نگه داشته می‌شود
-          await _recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc),
-              path: path);
-        } else {
-          await _recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc),
-              path: path);
-        }
+        await _recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc),
+            path: path);
         setState(() {
-          _recording = true;
-          _waiting = false;
-          _lastFile = path;
+          _state = _RecState.recording;
+          _tempFile = path;
+          _elapsedSeconds = 0;
         });
+        _startElapsedTimer();
         _snack('ضبط شروع شد');
       } catch (e) {
-        setState(() => _waiting = false);
+        setState(() => _state = _RecState.idle);
         _snack('خطا در شروع ضبط');
       }
     });
   }
 
-  Future<void> _stop() async {
-    final path = await _recorder.stop();
-    setState(() => _recording = false);
-    if (path != null) _snack('ذخیره شد: ${path.split('/').last}');
+  Future<void> _pause() async {
+    try {
+      await _recorder.pause();
+      _stopElapsedTimer();
+      setState(() => _state = _RecState.paused);
+      _snack('ضبط موقتاً متوقف شد');
+    } catch (e) {
+      _snack('خطا در توقف موقت');
+    }
   }
 
-  Future<void> _pickAndAppend() async {
-    final res = await FilePicker.platform.pickFiles(
-      type: _isVideo ? FileType.video : FileType.audio,
+  Future<void> _resume() async {
+    try {
+      await _recorder.resume();
+      _startElapsedTimer();
+      setState(() => _state = _RecState.recording);
+      _snack('ضبط ادامه یافت');
+    } catch (e) {
+      _snack('خطا در ادامه ضبط');
+    }
+  }
+
+  Future<void> _finish() async {
+    final path = await _recorder.stop();
+    _stopElapsedTimer();
+    setState(() {
+      _state = _RecState.finished;
+      _tempFile = path ?? _tempFile;
+    });
+    _snack('ضبط پایان یافت. حالا می‌توانید ذخیره کنید');
+  }
+
+  Future<void> _save() async {
+    if (_tempFile == null) return;
+    final ext = _tempFile!.split('.').last;
+    final defaultName =
+        'rec_${DateTime.now().millisecondsSinceEpoch}.$ext';
+    final controller = TextEditingController(text: defaultName);
+    final chosen = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('نام فایل برای ذخیره'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: 'نام فایل'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('انصراف'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+              child: const Text('ذخیره'),
+            ),
+          ],
+        );
+      },
     );
-    if (res != null && res.files.single.path != null) {
-      setState(() => _lastFile = res.files.single.path);
-      _snack('فایل انتخاب شد و به انتها اضافه می‌شود');
+    if (chosen == null || chosen.isEmpty) return;
+
+    final granted = await Permission.manageExternalStorage.request();
+    if (!granted.isGranted) {
+      _snack('دسترسی به حافظه داده نشد');
+      return;
+    }
+    try {
+      final folder = Directory('/storage/emulated/0/acc-rec');
+      if (!await folder.exists()) {
+        await folder.create(recursive: true);
+      }
+      final destPath = '${folder.path}/$chosen';
+      await File(_tempFile!).copy(destPath);
+      setState(() {
+        _state = _RecState.idle;
+        _tempFile = null;
+        _elapsedSeconds = 0;
+      });
+      _snack('در پوشه acc-rec ذخیره شد: $chosen');
+    } catch (e) {
+      _snack('خطا در ذخیره فایل');
     }
   }
 
@@ -152,8 +269,43 @@ class _RecordTabState extends State<RecordTab> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
+  String _mainButtonLabel() {
+    switch (_state) {
+      case _RecState.idle:
+        return 'ضبط';
+      case _RecState.recording:
+        return 'توقف موقت';
+      case _RecState.paused:
+        return 'ادامه ضبط';
+      case _RecState.waiting:
+        return 'در حال شمارش…';
+      case _RecState.finished:
+        return 'ضبط تمام شده';
+    }
+  }
+
+  Future<void> _mainButtonPressed() async {
+    switch (_state) {
+      case _RecState.idle:
+        await _startWithDelay();
+        break;
+      case _RecState.recording:
+        await _pause();
+        break;
+      case _RecState.paused:
+        await _resume();
+        break;
+      case _RecState.waiting:
+      case _RecState.finished:
+        break;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final canFinish =
+        _state == _RecState.recording || _state == _RecState.paused;
+    final canSave = _state == _RecState.finished;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -167,54 +319,70 @@ class _RecordTabState extends State<RecordTab> {
                   RadioListTile<bool>(
                     value: false,
                     groupValue: _isVideo,
-                    onChanged: _recording || _waiting
-                        ? null
-                        : (v) => setState(() => _isVideo = v ?? false),
+                    onChanged: _state == _RecState.idle
+                        ? (v) => setState(() => _isVideo = v ?? false)
+                        : null,
                     title: const Text('صدا'),
                   ),
                   RadioListTile<bool>(
                     value: true,
                     groupValue: _isVideo,
-                    onChanged: _recording || _waiting
-                        ? null
-                        : (v) => setState(() => _isVideo = v ?? true),
+                    onChanged: _state == _RecState.idle
+                        ? (v) => setState(() => _isVideo = v ?? true)
+                        : null,
                     title: const Text('تصویر'),
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 16),
-            if (_waiting)
+            if (_state == _RecState.waiting)
               Text('ضبط تا $_countdown ثانیه دیگر شروع می‌شود…',
                   style: Theme.of(context).textTheme.titleMedium),
+            if (_state == _RecState.recording || _state == _RecState.paused)
+              Semantics(
+                label: 'زمان سپری شده ضبط: ${_formatElapsed()}',
+                child: Text(
+                  _formatElapsed(),
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+              ),
             const SizedBox(height: 16),
             Semantics(
-              label: _recording ? 'توقف ضبط' : 'شروع ضبط با سه ثانیه تأخیر',
+              label:
+                  '${_mainButtonLabel()}. با کلید کاهش صدای گوشی هم می‌توان همین کار را انجام داد',
               button: true,
               child: FilledButton.icon(
-                icon: Icon(_recording ? Icons.stop : Icons.fiber_manual_record),
-                label: Text(_recording ? 'توقف' : 'ضبط'),
-                onPressed: _waiting
+                icon: Icon(_state == _RecState.recording
+                    ? Icons.pause
+                    : Icons.fiber_manual_record),
+                label: Text(_mainButtonLabel()),
+                onPressed: _state == _RecState.waiting ||
+                        _state == _RecState.finished
                     ? null
-                    : (_recording ? _stop : _startWithDelay),
+                    : _mainButtonPressed,
               ),
             ),
             const SizedBox(height: 12),
             Semantics(
-              label: 'انتخاب فایل و افزودن به انتهای ضبط',
+              label: 'پایان کامل ضبط',
               button: true,
               child: OutlinedButton.icon(
-                icon: const Icon(Icons.playlist_add),
-                label: const Text('افزودن فایل به انتها'),
-                onPressed: _recording || _waiting ? null : _pickAndAppend,
+                icon: const Icon(Icons.stop_circle),
+                label: const Text('پایان ضبط'),
+                onPressed: canFinish ? _finish : null,
               ),
             ),
-            if (_lastFile != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 16),
-                child: Text('آخرین فایل: ${_lastFile!.split('/').last}',
-                    textDirection: TextDirection.ltr),
+            const SizedBox(height: 12),
+            Semantics(
+              label: 'ذخیره فایل ضبط شده در پوشه اکسی رک',
+              button: true,
+              child: FilledButton.icon(
+                icon: const Icon(Icons.save),
+                label: const Text('ذخیره'),
+                onPressed: canSave ? _save : null,
               ),
+            ),
           ],
         ),
       ),
