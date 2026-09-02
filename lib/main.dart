@@ -76,6 +76,8 @@ enum _RecState { idle, waiting, recording, paused, finished }
 class _RecordTabState extends State<RecordTab> {
   static const MethodChannel _serviceChannel =
       MethodChannel('acc_rec/foreground_service');
+  static const MethodChannel _screenChannel =
+      MethodChannel('acc_rec/screen_events');
 
   final AudioRecorder _recorder = AudioRecorder();
   final FocusNode _mainButtonFocus = FocusNode();
@@ -86,6 +88,16 @@ class _RecordTabState extends State<RecordTab> {
   Timer? _elapsedTimer;
   int _elapsedSeconds = 0;
   String? _tempFile;
+
+  @override
+  void initState() {
+    super.initState();
+    _screenChannel.setMethodCallHandler((call) async {
+      if (call.method == 'screenOn' && _state == _RecState.recording) {
+        await _pause();
+      }
+    });
+  }
 
   @override
   void dispose() {
@@ -99,6 +111,12 @@ class _RecordTabState extends State<RecordTab> {
   Future<bool> _ensurePermission() async {
     final p = _isVideo ? Permission.camera : Permission.microphone;
     return await p.request().isGranted;
+  }
+
+  void _focusMainButtonNextFrame() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _mainButtonFocus.requestFocus();
+    });
   }
 
   String _formatElapsed() {
@@ -148,7 +166,7 @@ class _RecordTabState extends State<RecordTab> {
           _elapsedSeconds = 0;
         });
         _startElapsedTimer();
-        _mainButtonFocus.requestFocus();
+        _focusMainButtonNextFrame();
       } catch (e) {
         setState(() => _state = _RecState.idle);
         _snack('خطا در شروع ضبط');
@@ -161,7 +179,7 @@ class _RecordTabState extends State<RecordTab> {
       await _recorder.pause();
       _stopElapsedTimer();
       setState(() => _state = _RecState.paused);
-      _mainButtonFocus.requestFocus();
+      _focusMainButtonNextFrame();
     } catch (e) {
       _snack('خطا در توقف موقت');
     }
@@ -172,7 +190,7 @@ class _RecordTabState extends State<RecordTab> {
       await _recorder.resume();
       _startElapsedTimer();
       setState(() => _state = _RecState.recording);
-      _mainButtonFocus.requestFocus();
+      _focusMainButtonNextFrame();
     } catch (e) {
       _snack('خطا در ادامه ضبط');
     }
