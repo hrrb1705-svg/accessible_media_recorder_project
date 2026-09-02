@@ -78,6 +78,7 @@ class _RecordTabState extends State<RecordTab> {
       MethodChannel('acc_rec/foreground_service');
 
   final AudioRecorder _recorder = AudioRecorder();
+  final FocusNode _mainButtonFocus = FocusNode();
   bool _isVideo = false; // false = صدا، true = تصویر
   _RecState _state = _RecState.idle;
   int _countdown = 3;
@@ -91,6 +92,7 @@ class _RecordTabState extends State<RecordTab> {
     _countdownTimer?.cancel();
     _elapsedTimer?.cancel();
     _recorder.dispose();
+    _mainButtonFocus.dispose();
     super.dispose();
   }
 
@@ -146,6 +148,7 @@ class _RecordTabState extends State<RecordTab> {
           _elapsedSeconds = 0;
         });
         _startElapsedTimer();
+        _mainButtonFocus.requestFocus();
       } catch (e) {
         setState(() => _state = _RecState.idle);
         _snack('خطا در شروع ضبط');
@@ -158,6 +161,7 @@ class _RecordTabState extends State<RecordTab> {
       await _recorder.pause();
       _stopElapsedTimer();
       setState(() => _state = _RecState.paused);
+      _mainButtonFocus.requestFocus();
     } catch (e) {
       _snack('خطا در توقف موقت');
     }
@@ -168,6 +172,7 @@ class _RecordTabState extends State<RecordTab> {
       await _recorder.resume();
       _startElapsedTimer();
       setState(() => _state = _RecState.recording);
+      _mainButtonFocus.requestFocus();
     } catch (e) {
       _snack('خطا در ادامه ضبط');
     }
@@ -361,6 +366,7 @@ class _RecordTabState extends State<RecordTab> {
                 label: _mainButtonLabel(),
                 button: true,
                 child: FilledButton.icon(
+                  focusNode: _mainButtonFocus,
                   icon: Icon(_state == _RecState.recording
                       ? Icons.pause
                       : Icons.fiber_manual_record),
