@@ -75,6 +75,8 @@ enum _RecState { idle, waiting, recording, paused, finished }
 
 class _RecordTabState extends State<RecordTab> {
   static const MethodChannel _volumeChannel = MethodChannel('acc_rec/volume_keys');
+  static const MethodChannel _serviceChannel =
+      MethodChannel('acc_rec/foreground_service');
 
   final AudioRecorder _recorder = AudioRecorder();
   bool _isVideo = false; // false = صدا، true = تصویر
@@ -84,6 +86,7 @@ class _RecordTabState extends State<RecordTab> {
   Timer? _elapsedTimer;
   int _elapsedSeconds = 0;
   String? _tempFile;
+  bool _pauseOnNextTouch = false;
 
   @override
   void initState() {
@@ -162,6 +165,8 @@ class _RecordTabState extends State<RecordTab> {
       }
       t.cancel();
       try {
+        await Permission.notification.request();
+        await _serviceChannel.invokeMethod('start');
         await _recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc),
             path: path);
         setState(() {
@@ -169,6 +174,7 @@ class _RecordTabState extends State<RecordTab> {
           _tempFile = path;
           _elapsedSeconds = 0;
         });
+        _pauseOnNextTouch = true;
         _startElapsedTimer();
       } catch (e) {
         setState(() => _state = _RecState.idle);
@@ -179,6 +185,7 @@ class _RecordTabState extends State<RecordTab> {
 
   Future<void> _pause() async {
     try {
+      _pauseOnNextTouch = false;
       await _recorder.pause();
       _stopElapsedTimer();
       setState(() => _state = _RecState.paused);
@@ -192,6 +199,7 @@ class _RecordTabState extends State<RecordTab> {
       await _recorder.resume();
       _startElapsedTimer();
       setState(() => _state = _RecState.recording);
+      _pauseOnNextTouch = true;
     } catch (e) {
       _snack('خطا در ادامه ضبط');
     }
@@ -199,7 +207,9 @@ class _RecordTabState extends State<RecordTab> {
 
   Future<void> _finish() async {
     final path = await _recorder.stop();
+    _pauseOnNextTouch = false;
     _stopElapsedTimer();
+    await _serviceChannel.invokeMethod('stop');
     setState(() {
       _state = _RecState.finished;
       _tempFile = path ?? _tempFile;
@@ -301,12 +311,22 @@ class _RecordTabState extends State<RecordTab> {
     }
   }
 
+  void _onRawTouch(PointerDownEvent event) {
+    if (_pauseOnNextTouch && _state == _RecState.recording) {
+      _pauseOnNextTouch = false;
+      _pause();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final canFinish =
         _state == _RecState.recording || _state == _RecState.paused;
     final canSave = _state == _RecState.finished;
-    return Padding(
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: _onRawTouch,
+      child: Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
@@ -396,6 +416,7 @@ class _RecordTabState extends State<RecordTab> {
             ],
           ),
         ],
+      ),
       ),
     );
   }
