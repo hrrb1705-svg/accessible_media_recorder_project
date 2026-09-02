@@ -74,7 +74,6 @@ class RecordTab extends StatefulWidget {
 enum _RecState { idle, waiting, recording, paused, finished }
 
 class _RecordTabState extends State<RecordTab> {
-  static const MethodChannel _volumeChannel = MethodChannel('acc_rec/volume_keys');
   static const MethodChannel _serviceChannel =
       MethodChannel('acc_rec/foreground_service');
 
@@ -86,17 +85,6 @@ class _RecordTabState extends State<RecordTab> {
   Timer? _elapsedTimer;
   int _elapsedSeconds = 0;
   String? _tempFile;
-  bool _pauseOnNextTouch = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _volumeChannel.setMethodCallHandler((call) async {
-      if (call.method == 'volumeKeyPressed') {
-        await _toggleFromVolumeKey();
-      }
-    });
-  }
 
   @override
   void dispose() {
@@ -128,23 +116,6 @@ class _RecordTabState extends State<RecordTab> {
     _elapsedTimer?.cancel();
   }
 
-  Future<void> _toggleFromVolumeKey() async {
-    switch (_state) {
-      case _RecState.idle:
-        await _startWithDelay();
-        break;
-      case _RecState.recording:
-        await _pause();
-        break;
-      case _RecState.paused:
-        await _resume();
-        break;
-      case _RecState.waiting:
-      case _RecState.finished:
-        break;
-    }
-  }
-
   Future<void> _startWithDelay() async {
     if (!(await _ensurePermission())) {
       _snack('دسترسی لازم داده نشد');
@@ -174,7 +145,6 @@ class _RecordTabState extends State<RecordTab> {
           _tempFile = path;
           _elapsedSeconds = 0;
         });
-        _pauseOnNextTouch = true;
         _startElapsedTimer();
       } catch (e) {
         setState(() => _state = _RecState.idle);
@@ -185,7 +155,6 @@ class _RecordTabState extends State<RecordTab> {
 
   Future<void> _pause() async {
     try {
-      _pauseOnNextTouch = false;
       await _recorder.pause();
       _stopElapsedTimer();
       setState(() => _state = _RecState.paused);
@@ -199,7 +168,6 @@ class _RecordTabState extends State<RecordTab> {
       await _recorder.resume();
       _startElapsedTimer();
       setState(() => _state = _RecState.recording);
-      _pauseOnNextTouch = true;
     } catch (e) {
       _snack('خطا در ادامه ضبط');
     }
@@ -207,7 +175,6 @@ class _RecordTabState extends State<RecordTab> {
 
   Future<void> _finish() async {
     final path = await _recorder.stop();
-    _pauseOnNextTouch = false;
     _stopElapsedTimer();
     await _serviceChannel.invokeMethod('stop');
     setState(() {
@@ -248,7 +215,16 @@ class _RecordTabState extends State<RecordTab> {
         );
       },
     );
-    if (chosenBase == null || chosenBase.isEmpty) return;
+    if (chosenBase == null) {
+      // کاربر انصراف را انتخاب کرد؛ ضبط کنار گذاشته می‌شود و کلید ذخیره غیرفعال می‌شود
+      setState(() {
+        _state = _RecState.idle;
+        _tempFile = null;
+        _elapsedSeconds = 0;
+      });
+      return;
+    }
+    if (chosenBase.isEmpty) return;
     final chosen = '$chosenBase.$ext';
 
     final granted = await Permission.manageExternalStorage.request();
@@ -311,49 +287,50 @@ class _RecordTabState extends State<RecordTab> {
     }
   }
 
-  void _onRawTouch(PointerDownEvent event) {
-    if (_pauseOnNextTouch && _state == _RecState.recording) {
-      _pauseOnNextTouch = false;
-      _pause();
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final canFinish =
         _state == _RecState.recording || _state == _RecState.paused;
     final canSave = _state == _RecState.finished;
-    return Listener(
-      behavior: HitTestBehavior.translucent,
-      onPointerDown: _onRawTouch,
-      child: Padding(
+    return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
-          Semantics(
-            label: 'انتخاب نوع ضبط: صدا یا تصویر',
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Radio<bool>(
-                  value: false,
-                  groupValue: _isVideo,
-                  onChanged: _state == _RecState.idle
-                      ? (v) => setState(() => _isVideo = v ?? false)
-                      : null,
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              MergeSemantics(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Radio<bool>(
+                      value: false,
+                      groupValue: _isVideo,
+                      onChanged: _state == _RecState.idle
+                          ? (v) => setState(() => _isVideo = v ?? false)
+                          : null,
+                    ),
+                    const Text('صدا'),
+                  ],
                 ),
-                const Text('صدا'),
-                const SizedBox(width: 24),
-                Radio<bool>(
-                  value: true,
-                  groupValue: _isVideo,
-                  onChanged: _state == _RecState.idle
-                      ? (v) => setState(() => _isVideo = v ?? true)
-                      : null,
+              ),
+              const SizedBox(width: 24),
+              MergeSemantics(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Radio<bool>(
+                      value: true,
+                      groupValue: _isVideo,
+                      onChanged: _state == _RecState.idle
+                          ? (v) => setState(() => _isVideo = v ?? true)
+                          : null,
+                    ),
+                    const Text('تصویر'),
+                  ],
                 ),
-                const Text('تصویر'),
-              ],
-            ),
+              ),
+            ],
           ),
           Expanded(
             child: Center(
@@ -381,8 +358,7 @@ class _RecordTabState extends State<RecordTab> {
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
               Semantics(
-                label:
-                    '${_mainButtonLabel()}. با کلید کاهش صدای گوشی هم می‌توان همین کار را انجام داد',
+                label: _mainButtonLabel(),
                 button: true,
                 child: FilledButton.icon(
                   icon: Icon(_state == _RecState.recording
@@ -416,7 +392,6 @@ class _RecordTabState extends State<RecordTab> {
             ],
           ),
         ],
-      ),
       ),
     );
   }
