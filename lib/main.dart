@@ -281,7 +281,7 @@ class _RecordTabState extends State<RecordTab> {
   String _mainButtonLabel() {
     switch (_state) {
       case _RecState.idle:
-        return 'ضبط';
+        return 'شروع ضبط';
       case _RecState.recording:
         return 'توقف موقت';
       case _RecState.paused:
@@ -431,10 +431,14 @@ class EditTab extends StatefulWidget {
 
 class _EditTabState extends State<EditTab> {
   final AudioPlayer _player = AudioPlayer();
-  bool _selectionMode = false;
+  final TextEditingController _stepController =
+      TextEditingController(text: '5.0');
+  bool _isVideo = false; // false = صدا، true = تصویر
   Duration _pos = Duration.zero;
   Duration _len = Duration.zero;
   String? _file;
+  Duration? _selStart;
+  Duration? _selEnd;
 
   @override
   void initState() {
@@ -446,13 +450,21 @@ class _EditTabState extends State<EditTab> {
   @override
   void dispose() {
     _player.dispose();
+    _stepController.dispose();
     super.dispose();
   }
 
+  double get _stepSeconds =>
+      double.tryParse(_stepController.text.replaceAll(',', '.')) ?? 5.0;
+
   Future<void> _open() async {
-    final res = await FilePicker.platform.pickFiles(type: FileType.audio);
+    final res = await FilePicker.platform.pickFiles(
+      type: _isVideo ? FileType.video : FileType.audio,
+    );
     if (res != null && res.files.single.path != null) {
       _file = res.files.single.path;
+      _selStart = null;
+      _selEnd = null;
       await _player.setSource(DeviceFileSource(_file!));
       if (mounted) setState(() {});
     }
@@ -467,9 +479,28 @@ class _EditTabState extends State<EditTab> {
     if (mounted) setState(() {});
   }
 
-  Future<void> _seek(int seconds) async {
-    final d = _pos + Duration(seconds: seconds);
+  Future<void> _seek(double seconds) async {
+    final d = _pos + Duration(milliseconds: (seconds * 1000).round());
     await _player.seek(d < Duration.zero ? Duration.zero : d);
+  }
+
+  void _markSelection() {
+    setState(() {
+      if (_selStart == null) {
+        _selStart = _pos;
+      } else if (_selEnd == null) {
+        _selEnd = _pos;
+      } else {
+        _selStart = _pos;
+        _selEnd = null;
+      }
+    });
+  }
+
+  String _selectionButtonLabel() {
+    if (_selStart == null) return 'شروع انتخاب';
+    if (_selEnd == null) return 'پایان انتخاب';
+    return 'انتخاب تازه';
   }
 
   Future<void> _trim() async {
@@ -478,95 +509,188 @@ class _EditTabState extends State<EditTab> {
         content: Text('برش در این نسخه هنوز پیاده‌سازی نشده است')));
   }
 
+  Future<void> _save() async {
+    // جای‌نگهدار ذخیره فایل ویرایش‌شده؛ همراه با برش کامل می‌شود
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('ذخیره در این نسخه هنوز پیاده‌سازی نشده است')));
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Semantics(
-              label: 'انتخاب فایل برای ویرایش',
-              button: true,
-              child: OutlinedButton.icon(
-                icon: const Icon(Icons.folder_open),
-                label: const Text('باز کردن فایل'),
-                onPressed: _open,
+    final canTrim = _selStart != null && _selEnd != null;
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              MergeSemantics(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Radio<bool>(
+                      value: false,
+                      groupValue: _isVideo,
+                      onChanged: (v) => setState(() => _isVideo = v ?? false),
+                    ),
+                    const Text('صدا'),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 24),
+              MergeSemantics(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Radio<bool>(
+                      value: true,
+                      groupValue: _isVideo,
+                      onChanged: (v) => setState(() => _isVideo = v ?? true),
+                    ),
+                    const Text('تصویر'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          Expanded(
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // این فضا برای پیش‌نمایش تصویر هنگام ویرایش ویدیو در نظر گرفته شده است
+                  Semantics(
+                    label:
+                        'موقعیت پخش: ${_pos.inSeconds} ثانیه از ${_len.inSeconds} ثانیه',
+                    child: Text(
+                      '${_pos.inSeconds} / ${_len.inSeconds} ثانیه',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Text('میزان پرش (ثانیه): '),
+                      SizedBox(
+                        width: 70,
+                        child: Semantics(
+                          label: 'مقدار پرش به جلو یا عقب به ثانیه',
+                          child: TextField(
+                            controller: _stepController,
+                            keyboardType:
+                                const TextInputType.numberWithOptions(
+                                    decimal: true),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_selStart != null)
+                    Text(
+                      _selEnd != null
+                          ? 'انتخاب: ${_selStart!.inSeconds} تا ${_selEnd!.inSeconds} ثانیه'
+                          : 'شروع انتخاب: ${_selStart!.inSeconds} ثانیه',
+                    ),
+                ],
               ),
             ),
-            const SizedBox(height: 16),
-            Text('موقعیت: ${_pos.inSeconds} از ${_len.inSeconds} ثانیه'),
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Semantics(
-                  label: 'پرش به ابتدا',
-                  button: true,
-                  child: IconButton(
-                    icon: const Icon(Icons.skip_previous),
-                    onPressed: () => _seek(-_pos.inSeconds),
-                  ),
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Semantics(
+                label: 'پرش به ابتدا',
+                button: true,
+                child: IconButton(
+                  icon: const Icon(Icons.skip_previous),
+                  onPressed: _file == null ? null : () => _seek(-_pos.inSeconds.toDouble()),
                 ),
-                Semantics(
-                  label: 'پنج ثانیه عقب',
-                  button: true,
-                  child: IconButton(
-                    icon: const Icon(Icons.replay_5),
-                    onPressed: () => _seek(-5),
-                  ),
-                ),
-                Semantics(
-                  label: 'پخش یا توقف',
-                  button: true,
-                  child: IconButton(
-                    iconSize: 40,
-                    icon: Icon(_player.state == PlayerState.playing
-                        ? Icons.pause_circle
-                        : Icons.play_circle),
-                    onPressed: _file == null ? null : _togglePlay,
-                  ),
-                ),
-                Semantics(
-                  label: 'پنج ثانیه جلو',
-                  button: true,
-                  child: IconButton(
-                    icon: const Icon(Icons.forward_5),
-                    onPressed: () => _seek(5),
-                  ),
-                ),
-                Semantics(
-                  label: 'پرش به انتها',
-                  button: true,
-                  child: IconButton(
-                    icon: const Icon(Icons.skip_next),
-                    onPressed: () => _seek(_len.inSeconds),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Semantics(
-              label: 'فعال یا غیرفعال کردن حالت انتخاب برای برش',
-              child: SwitchListTile(
-                title: const Text('حالت انتخاب'),
-                value: _selectionMode,
-                onChanged: (v) => setState(() => _selectionMode = v),
               ),
-            ),
-            const SizedBox(height: 8),
-            Semantics(
-              label: 'برش بخش انتخاب‌شده',
-              button: true,
-              child: FilledButton.icon(
-                icon: const Icon(Icons.content_cut),
-                label: const Text('برش'),
-                onPressed: _selectionMode ? _trim : null,
+              Semantics(
+                label: '${_stepSeconds.toStringAsFixed(1)} ثانیه عقب',
+                button: true,
+                child: IconButton(
+                  icon: const Icon(Icons.replay_5),
+                  onPressed: _file == null ? null : () => _seek(-_stepSeconds),
+                ),
               ),
-            ),
-          ],
-        ),
+              Semantics(
+                label: 'پخش یا توقف',
+                button: true,
+                child: IconButton(
+                  iconSize: 40,
+                  icon: Icon(_player.state == PlayerState.playing
+                      ? Icons.pause_circle
+                      : Icons.play_circle),
+                  onPressed: _file == null ? null : _togglePlay,
+                ),
+              ),
+              Semantics(
+                label: '${_stepSeconds.toStringAsFixed(1)} ثانیه جلو',
+                button: true,
+                child: IconButton(
+                  icon: const Icon(Icons.forward_5),
+                  onPressed: _file == null ? null : () => _seek(_stepSeconds),
+                ),
+              ),
+              Semantics(
+                label: 'پرش به انتها',
+                button: true,
+                child: IconButton(
+                  icon: const Icon(Icons.skip_next),
+                  onPressed: _file == null
+                      ? null
+                      : () => _seek((_len - _pos).inSeconds.toDouble()),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              Semantics(
+                label: 'انتخاب فایل برای ویرایش',
+                button: true,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.folder_open),
+                  label: const Text('انتخاب فایل'),
+                  onPressed: _open,
+                ),
+              ),
+              Semantics(
+                label: '${_selectionButtonLabel()} در موقعیت فعلی پخش',
+                button: true,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.flag),
+                  label: Text(_selectionButtonLabel()),
+                  onPressed: _file == null ? null : _markSelection,
+                ),
+              ),
+              Semantics(
+                label: 'برش بخش انتخاب‌شده',
+                button: true,
+                child: FilledButton.icon(
+                  icon: const Icon(Icons.content_cut),
+                  label: const Text('برش'),
+                  onPressed: canTrim ? _trim : null,
+                ),
+              ),
+              Semantics(
+                label: 'ذخیره فایل ویرایش‌شده',
+                button: true,
+                child: FilledButton.icon(
+                  icon: const Icon(Icons.save),
+                  label: const Text('ذخیره'),
+                  onPressed: _file == null ? null : _save,
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
