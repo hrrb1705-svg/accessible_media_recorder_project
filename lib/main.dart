@@ -9,6 +9,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
+import 'package:ffmpeg_kit_flutter_new_min/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new_min/return_code.dart';
 
 void main() => runApp(const AccessibleMediaRecorderApp());
 
@@ -439,6 +441,8 @@ class _EditTabState extends State<EditTab> {
   String? _file;
   Duration? _selStart;
   Duration? _selEnd;
+  String? _trimmedFile;
+  bool _isBusy = false;
 
   @override
   void initState() {
@@ -460,11 +464,13 @@ class _EditTabState extends State<EditTab> {
   Future<void> _open() async {
     final res = await FilePicker.platform.pickFiles(
       type: _isVideo ? FileType.video : FileType.audio,
+      initialDirectory: '/storage/emulated/0/acc-rec',
     );
     if (res != null && res.files.single.path != null) {
       _file = res.files.single.path;
       _selStart = null;
       _selEnd = null;
+      _trimmedFile = null;
       await _player.setSource(DeviceFileSource(_file!));
       if (mounted) setState(() {});
     }
@@ -494,30 +500,132 @@ class _EditTabState extends State<EditTab> {
         _selStart = _pos;
         _selEnd = null;
       }
+      _trimmedFile = null;
     });
   }
 
+  // این متن فقط برای صفحه‌خوان استفاده می‌شود، نه به عنوان متن روی دکمه
   String _selectionButtonLabel() {
-    if (_selStart == null) return 'شروع انتخاب';
-    if (_selEnd == null) return 'پایان انتخاب';
-    return 'انتخاب تازه';
+    if (_selStart == null) return 'علامت‌گذاری شروع انتخاب';
+    if (_selEnd == null) return 'علامت‌گذاری پایان انتخاب';
+    return 'انتخاب کامل شد، برای انتخاب تازه دوباره فشار دهید';
+  }
+
+  // نماد کوچک روی دکمه‌ی انتخاب، به‌جای متن طولانی
+  IconData _selectionButtonIcon() {
+    if (_selStart == null) return Icons.fiber_manual_record;
+    if (_selEnd == null) return Icons.stop;
+    return Icons.restart_alt;
   }
 
   Future<void> _trim() async {
-    // جای‌نگهدار برش با ffmpeg_kit؛ بعداً کامل می‌شود
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('برش در این نسخه هنوز پیاده‌سازی نشده است')));
+    if (_file == null || _selStart == null || _selEnd == null) return;
+    if (_selEnd! <= _selStart!) {
+      _snack('پایان انتخاب باید بعد از شروع باشد');
+      return;
+    }
+    setState(() => _isBusy = true);
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final ext = _isVideo ? 'mp4' : 'mp3';
+      final outPath =
+          '${tempDir.path}/trim_${DateTime.now().millisecondsSinceEpoch}.$ext';
+      final startSec = _selStart!.inMilliseconds / 1000.0;
+      final durSec =
+          (_selEnd! - _selStart!).inMilliseconds / 1000.0;
+
+      final command = _isVideo
+          ? '-y -i "${_file!}" -ss $startSec -t $durSec '
+              '-c:v libx264 -preset veryfast -c:a aac "$outPath"'
+          : '-y -ss $startSec -i "${_file!}" -t $durSec '
+              '-c:a libmp3lame -q:a 2 "$outPath"';
+
+      final session = await FFmpegKit.execute(command);
+      final returnCode = await session.getReturnCode();
+
+      if (ReturnCode.isSuccess(returnCode)) {
+        setState(() {
+          _trimmedFile = outPath;
+          _isBusy = false;
+        });
+        _snack('برش انجام شد. حالا می‌توانید ذخیره کنید');
+      } else {
+        setState(() => _isBusy = false);
+        _snack('برش انجام نشد. لطفاً دوباره تلاش کنید');
+      }
+    } catch (e) {
+      setState(() => _isBusy = false);
+      _snack('خطا در برش فایل');
+    }
   }
 
   Future<void> _save() async {
-    // جای‌نگهدار ذخیره فایل ویرایش‌شده؛ همراه با برش کامل می‌شود
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('ذخیره در این نسخه هنوز پیاده‌سازی نشده است')));
+    if (_trimmedFile == null) return;
+    final ext = _trimmedFile!.split('.').last;
+    final defaultBase = 'cut_${DateTime.now().millisecondsSinceEpoch}';
+    final controller = TextEditingController(text: defaultBase);
+    final chosenBase = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('نام فایل برای ذخیره'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: InputDecoration(
+              labelText: 'نام فایل',
+              helperText: 'پسوند فایل (.${ext}) خودکار اضافه می‌شود و ثابت است',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('انصراف'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+              child: const Text('ذخیره'),
+            ),
+          ],
+        );
+      },
+    );
+    if (chosenBase == null || chosenBase.isEmpty) return;
+    final chosen = '$chosenBase.$ext';
+
+    final granted = await Permission.manageExternalStorage.request();
+    if (!granted.isGranted) {
+      _snack('دسترسی به حافظه داده نشد');
+      return;
+    }
+    try {
+      // همان پوشه‌ای که تب ضبط استفاده می‌کند، تا هر دو تب یک پوشه ببینند
+      final folder = Directory('/storage/emulated/0/acc-rec');
+      if (!await folder.exists()) {
+        await folder.create(recursive: true);
+      }
+      final destPath = '${folder.path}/$chosen';
+      await File(_trimmedFile!).copy(destPath);
+      setState(() {
+        _trimmedFile = null;
+        _selStart = null;
+        _selEnd = null;
+      });
+      _snack('در پوشه acc-rec ذخیره شد: $chosen');
+    } catch (e) {
+      _snack('خطا در ذخیره فایل');
+    }
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
   }
 
   @override
   Widget build(BuildContext context) {
-    final canTrim = _selStart != null && _selEnd != null;
+    final canTrim = _selStart != null && _selEnd != null && !_isBusy;
+    final canSave = _trimmedFile != null && !_isBusy;
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -554,48 +662,50 @@ class _EditTabState extends State<EditTab> {
               ),
             ],
           ),
+          const SizedBox(height: 8),
+          // نمایشگر زمان و گام پرش، درست زیر ردیف صدا و تصویر
+          Semantics(
+            label:
+                'موقعیت پخش: ${_pos.inSeconds} ثانیه از ${_len.inSeconds} ثانیه',
+            child: Text(
+              '${_pos.inSeconds} / ${_len.inSeconds} ثانیه',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Text('میزان پرش (ثانیه): '),
+              SizedBox(
+                width: 70,
+                child: Semantics(
+                  label: 'مقدار پرش به جلو یا عقب به ثانیه',
+                  child: TextField(
+                    controller: _stepController,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (_selStart != null)
+            Text(
+              _selEnd != null
+                  ? 'انتخاب: ${_selStart!.inSeconds} تا ${_selEnd!.inSeconds} ثانیه'
+                  : 'شروع انتخاب: ${_selStart!.inSeconds} ثانیه',
+            ),
+          if (_isBusy)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 4),
+              child: Text('در حال برش…'),
+            ),
+          // وسط صفحه فقط برای پیش‌نمایش تصویر در نظر گرفته شده است، خالی می‌ماند
           Expanded(
             child: Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  // این فضا برای پیش‌نمایش تصویر هنگام ویرایش ویدیو در نظر گرفته شده است
-                  Semantics(
-                    label:
-                        'موقعیت پخش: ${_pos.inSeconds} ثانیه از ${_len.inSeconds} ثانیه',
-                    child: Text(
-                      '${_pos.inSeconds} / ${_len.inSeconds} ثانیه',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Text('میزان پرش (ثانیه): '),
-                      SizedBox(
-                        width: 70,
-                        child: Semantics(
-                          label: 'مقدار پرش به جلو یا عقب به ثانیه',
-                          child: TextField(
-                            controller: _stepController,
-                            keyboardType:
-                                const TextInputType.numberWithOptions(
-                                    decimal: true),
-                            textAlign: TextAlign.center,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (_selStart != null)
-                    Text(
-                      _selEnd != null
-                          ? 'انتخاب: ${_selStart!.inSeconds} تا ${_selEnd!.inSeconds} ثانیه'
-                          : 'شروع انتخاب: ${_selStart!.inSeconds} ثانیه',
-                    ),
-                ],
-              ),
+              child: SizedBox.shrink(),
             ),
           ),
           Row(
@@ -662,11 +772,10 @@ class _EditTabState extends State<EditTab> {
                 ),
               ),
               Semantics(
-                label: '${_selectionButtonLabel()} در موقعیت فعلی پخش',
+                label: _selectionButtonLabel(),
                 button: true,
-                child: OutlinedButton.icon(
-                  icon: const Icon(Icons.flag),
-                  label: Text(_selectionButtonLabel()),
+                child: IconButton(
+                  icon: Icon(_selectionButtonIcon()),
                   onPressed: _file == null ? null : _markSelection,
                 ),
               ),
@@ -685,7 +794,7 @@ class _EditTabState extends State<EditTab> {
                 child: FilledButton.icon(
                   icon: const Icon(Icons.save),
                   label: const Text('ذخیره'),
-                  onPressed: _file == null ? null : _save,
+                  onPressed: canSave ? _save : null,
                 ),
               ),
             ],
