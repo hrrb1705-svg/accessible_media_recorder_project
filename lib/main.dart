@@ -439,8 +439,8 @@ class _EditTabState extends State<EditTab> {
   Duration _pos = Duration.zero;
   Duration _len = Duration.zero;
   String? _file;
-  Duration? _selStart;
-  Duration? _selEnd;
+  Duration? _pendingStart;
+  final List<MapEntry<Duration, Duration>> _selections = [];
   String? _trimmedFile;
   bool _isBusy = false;
 
@@ -449,6 +449,13 @@ class _EditTabState extends State<EditTab> {
     super.initState();
     _player.onPositionChanged.listen((d) => setState(() => _pos = d));
     _player.onDurationChanged.listen((d) => setState(() => _len = d));
+    // بدون این قسمت، بعد از رسیدن پخش به انتها کلیدهای عقب و ابتدا
+    // دیگر کار نمی‌کردند چون پخش‌کننده در حالت پایان‌یافته گیر می‌کرد
+    _player.onPlayerComplete.listen((_) async {
+      await _player.seek(Duration.zero);
+      await _player.pause();
+      if (mounted) setState(() => _pos = Duration.zero);
+    });
   }
 
   @override
@@ -468,8 +475,8 @@ class _EditTabState extends State<EditTab> {
     );
     if (res != null && res.files.single.path != null) {
       _file = res.files.single.path;
-      _selStart = null;
-      _selEnd = null;
+      _pendingStart = null;
+      _selections.clear();
       _trimmedFile = null;
       await _player.setSource(DeviceFileSource(_file!));
       if (mounted) setState(() {});
@@ -490,15 +497,23 @@ class _EditTabState extends State<EditTab> {
     await _player.seek(d < Duration.zero ? Duration.zero : d);
   }
 
+  Duration get _totalSelected => _selections.fold(
+      Duration.zero, (sum, e) => sum + (e.value - e.key));
+
+  // هر بار فشردن این کلید یک نقطه ثبت می‌کند؛ اولین بار شروع یک قطعه
+  // و بار دوم پایان همان قطعه است. با این کار می‌توان چند قطعه‌ی
+  // جدا از هم انتخاب کرد، نه فقط یک قطعه‌ی آخر
   void _markSelection() {
     setState(() {
-      if (_selStart == null) {
-        _selStart = _pos;
-      } else if (_selEnd == null) {
-        _selEnd = _pos;
+      if (_pendingStart == null) {
+        _pendingStart = _pos;
       } else {
-        _selStart = _pos;
-        _selEnd = null;
+        final start = _pendingStart!;
+        final end = _pos;
+        if (end > start) {
+          _selections.add(MapEntry(start, end));
+        }
+        _pendingStart = null;
       }
       _trimmedFile = null;
     });
@@ -506,58 +521,70 @@ class _EditTabState extends State<EditTab> {
 
   // این متن فقط برای صفحه‌خوان استفاده می‌شود، نه به عنوان متن روی دکمه
   String _selectionButtonLabel() {
-    if (_selStart == null) return 'علامت‌گذاری شروع انتخاب';
-    if (_selEnd == null) return 'علامت‌گذاری پایان انتخاب';
-    return 'انتخاب کامل شد، برای انتخاب تازه دوباره فشار دهید';
+    if (_pendingStart == null) {
+      return _selections.isEmpty
+          ? 'علامت‌گذاری شروع انتخاب'
+          : 'علامت‌گذاری شروع قطعه‌ی بعدی';
+    }
+    return 'علامت‌گذاری پایان این قطعه';
   }
 
   // نماد کوچک روی دکمه‌ی انتخاب، به‌جای متن طولانی
   IconData _selectionButtonIcon() {
-    if (_selStart == null) return Icons.fiber_manual_record;
-    if (_selEnd == null) return Icons.stop;
-    return Icons.restart_alt;
+    return _pendingStart == null ? Icons.fiber_manual_record : Icons.stop;
   }
 
   Future<void> _trim() async {
-    if (_file == null || _selStart == null || _selEnd == null) return;
-    if (_selEnd! <= _selStart!) {
-      _snack('پایان انتخاب باید بعد از شروع باشد');
-      return;
-    }
+    if (_file == null || _selections.isEmpty) return;
     setState(() => _isBusy = true);
     try {
       final tempDir = await getTemporaryDirectory();
       // پسوند خروجی همان پسوند فایل ورودی است، چون کدک تغییر نمی‌کند
       final ext = _file!.split('.').last;
-      final outPath =
-          '${tempDir.path}/trim_${DateTime.now().millisecondsSinceEpoch}.$ext';
-      final startSec = _selStart!.inMilliseconds / 1000.0;
-      final durSec = (_selEnd! - _selStart!).inMilliseconds / 1000.0;
+      final ts = DateTime.now().millisecondsSinceEpoch;
 
-      // کپی مستقیم جریان بدون رمزگذاری مجدد؛ نیازی به کتابخانه‌ی خارجی
-      // مثل mp3 یا h264 ندارد و با نسخه‌ی min بسته‌ی ffmpeg هم کار می‌کند
-      final command =
-          '-y -ss $startSec -i "${_file!}" -t $durSec -c copy "$outPath"';
-
-      final session = await FFmpegKit.execute(command);
-      final returnCode = await session.getReturnCode();
-
-      if (ReturnCode.isSuccess(returnCode)) {
-        setState(() {
-          _trimmedFile = outPath;
-          _isBusy = false;
-        });
-        _snack('برش انجام شد. حالا می‌توانید ذخیره کنید');
-      } else {
-        final logs = await session.getFailStackTrace();
-        setState(() => _isBusy = false);
-        _snack(logs == null
-            ? 'برش انجام نشد. لطفاً دوباره تلاش کنید'
-            : 'برش انجام نشد');
+      // قدم اول: هر قطعه‌ی انتخاب‌شده را جداگانه برش می‌دهیم
+      final segmentPaths = <String>[];
+      for (var i = 0; i < _selections.length; i++) {
+        final seg = _selections[i];
+        final startSec = seg.key.inMilliseconds / 1000.0;
+        final durSec = (seg.value - seg.key).inMilliseconds / 1000.0;
+        final segPath = '${tempDir.path}/seg_${ts}_$i.$ext';
+        final cmd =
+            '-y -ss $startSec -i "${_file!}" -t $durSec -c copy "$segPath"';
+        final session = await FFmpegKit.execute(cmd);
+        if (!ReturnCode.isSuccess(await session.getReturnCode())) {
+          throw Exception('segment $i failed');
+        }
+        segmentPaths.add(segPath);
       }
+
+      // قدم دوم: اگر بیش از یک قطعه بود، همه را پشت سر هم می‌چسبانیم
+      String outPath;
+      if (segmentPaths.length == 1) {
+        outPath = segmentPaths.first;
+      } else {
+        final listFile = File('${tempDir.path}/concat_$ts.txt');
+        final listContent =
+            segmentPaths.map((p) => "file '$p'").join('\n');
+        await listFile.writeAsString(listContent);
+        outPath = '${tempDir.path}/trim_$ts.$ext';
+        final concatCmd = '-y -f concat -safe 0 -i "${listFile.path}" '
+            '-c copy "$outPath"';
+        final session = await FFmpegKit.execute(concatCmd);
+        if (!ReturnCode.isSuccess(await session.getReturnCode())) {
+          throw Exception('concat failed');
+        }
+      }
+
+      setState(() {
+        _trimmedFile = outPath;
+        _isBusy = false;
+      });
+      _snack('برش انجام شد. حالا می‌توانید ذخیره کنید');
     } catch (e) {
       setState(() => _isBusy = false);
-      _snack('خطا در برش فایل');
+      _snack('برش انجام نشد. لطفاً دوباره تلاش کنید');
     }
   }
 
@@ -610,8 +637,8 @@ class _EditTabState extends State<EditTab> {
       await File(_trimmedFile!).copy(destPath);
       setState(() {
         _trimmedFile = null;
-        _selStart = null;
-        _selEnd = null;
+        _pendingStart = null;
+        _selections.clear();
       });
       _snack('در پوشه acc-rec ذخیره شد: $chosen');
     } catch (e) {
@@ -626,7 +653,7 @@ class _EditTabState extends State<EditTab> {
 
   @override
   Widget build(BuildContext context) {
-    final canTrim = _selStart != null && _selEnd != null && !_isBusy;
+    final canTrim = _selections.isNotEmpty && !_isBusy;
     final canSave = _trimmedFile != null && !_isBusy;
     return Padding(
       padding: const EdgeInsets.all(16),
@@ -676,41 +703,54 @@ class _EditTabState extends State<EditTab> {
               padding: EdgeInsets.symmetric(vertical: 4),
               child: Text('در حال برش…'),
             ),
-          // وضعیت پخش، گام پرش، و انتخاب، همه در یک خط درست بالای کلیدهای پخش
-          Semantics(
-            label: 'موقعیت پخش: ${_pos.inSeconds} ثانیه از ${_len.inSeconds} ثانیه'
-                '${_selStart != null ? (_selEnd != null ? '، انتخاب از ${_selStart!.inSeconds} تا ${_selEnd!.inSeconds} ثانیه' : '، شروع انتخاب در ${_selStart!.inSeconds} ثانیه') : ''}',
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  '${_pos.inSeconds} / ${_len.inSeconds} ثانیه',
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-                const SizedBox(width: 12),
-                const Text('گام: '),
-                SizedBox(
-                  width: 50,
-                  height: 36,
-                  child: ExcludeSemantics(
-                    child: TextField(
-                      controller: _stepController,
-                      keyboardType:
-                          const TextInputType.numberWithOptions(decimal: true),
-                      textAlign: TextAlign.center,
-                    ),
+          // وضعیت پخش، انتخاب، و گام؛ سه قسمت جدا از هم در یک ردیف
+          // تا صفحه‌خوان بتواند هرکدام را جداگانه بخواند، نه یک‌جا
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              Semantics(
+                label:
+                    'موقعیت پخش: ${_pos.inSeconds} ثانیه از ${_len.inSeconds} ثانیه',
+                child: ExcludeSemantics(
+                  child: Text(
+                    '${_pos.inSeconds} / ${_len.inSeconds} ثانیه',
+                    style: Theme.of(context).textTheme.bodyMedium,
                   ),
                 ),
-                if (_selStart != null) ...[
-                  const SizedBox(width: 12),
-                  Text(
-                    _selEnd != null
-                        ? '${_selStart!.inSeconds}-${_selEnd!.inSeconds} ث'
-                        : '${_selStart!.inSeconds} ث',
+              ),
+              Semantics(
+                label: _pendingStart != null
+                    ? 'شروع قطعه‌ی جاری در ${_pendingStart!.inSeconds} ثانیه، ${_selections.length} قطعه تمام‌شده'
+                    : (_selections.isEmpty
+                        ? 'هنوز چیزی انتخاب نشده'
+                        : '${_selections.length} قطعه انتخاب‌شده، مجموع ${_totalSelected.inSeconds} ثانیه'),
+                child: ExcludeSemantics(
+                  child: Text(
+                    _pendingStart != null
+                        ? 'شروع: ${_pendingStart!.inSeconds} ث'
+                        : (_selections.isEmpty
+                            ? 'بدون انتخاب'
+                            : '${_selections.length} قطعه، ${_totalSelected.inSeconds} ث'),
                   ),
-                ],
-              ],
-            ),
+                ),
+              ),
+              SizedBox(
+                width: 70,
+                height: 56,
+                child: TextField(
+                  controller: _stepController,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  textAlign: TextAlign.center,
+                  onChanged: (_) => setState(() {}),
+                  decoration: const InputDecoration(
+                    labelText: 'گام',
+                    helperText: 'ثانیه',
+                    isDense: true,
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 8),
           // کلیدهای کنترل پخش همیشه به ترتیب چپ به راست ثابت می‌مانند
