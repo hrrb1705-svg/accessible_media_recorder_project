@@ -527,18 +527,17 @@ class _EditTabState extends State<EditTab> {
     setState(() => _isBusy = true);
     try {
       final tempDir = await getTemporaryDirectory();
-      final ext = _isVideo ? 'mp4' : 'mp3';
+      // پسوند خروجی همان پسوند فایل ورودی است، چون کدک تغییر نمی‌کند
+      final ext = _file!.split('.').last;
       final outPath =
           '${tempDir.path}/trim_${DateTime.now().millisecondsSinceEpoch}.$ext';
       final startSec = _selStart!.inMilliseconds / 1000.0;
-      final durSec =
-          (_selEnd! - _selStart!).inMilliseconds / 1000.0;
+      final durSec = (_selEnd! - _selStart!).inMilliseconds / 1000.0;
 
-      final command = _isVideo
-          ? '-y -i "${_file!}" -ss $startSec -t $durSec '
-              '-c:v libx264 -preset veryfast -c:a aac "$outPath"'
-          : '-y -ss $startSec -i "${_file!}" -t $durSec '
-              '-c:a libmp3lame -q:a 2 "$outPath"';
+      // کپی مستقیم جریان بدون رمزگذاری مجدد؛ نیازی به کتابخانه‌ی خارجی
+      // مثل mp3 یا h264 ندارد و با نسخه‌ی min بسته‌ی ffmpeg هم کار می‌کند
+      final command =
+          '-y -ss $startSec -i "${_file!}" -t $durSec -c copy "$outPath"';
 
       final session = await FFmpegKit.execute(command);
       final returnCode = await session.getReturnCode();
@@ -550,8 +549,11 @@ class _EditTabState extends State<EditTab> {
         });
         _snack('برش انجام شد. حالا می‌توانید ذخیره کنید');
       } else {
+        final logs = await session.getFailStackTrace();
         setState(() => _isBusy = false);
-        _snack('برش انجام نشد. لطفاً دوباره تلاش کنید');
+        _snack(logs == null
+            ? 'برش انجام نشد. لطفاً دوباره تلاش کنید'
+            : 'برش انجام نشد');
       }
     } catch (e) {
       setState(() => _isBusy = false);
@@ -663,100 +665,97 @@ class _EditTabState extends State<EditTab> {
             ],
           ),
           const SizedBox(height: 8),
-          // نمایشگر زمان و گام پرش، درست زیر ردیف صدا و تصویر
-          Semantics(
-            label:
-                'موقعیت پخش: ${_pos.inSeconds} ثانیه از ${_len.inSeconds} ثانیه',
-            child: Text(
-              '${_pos.inSeconds} / ${_len.inSeconds} ثانیه',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Text('میزان پرش (ثانیه): '),
-              SizedBox(
-                width: 70,
-                child: Semantics(
-                  label: 'مقدار پرش به جلو یا عقب به ثانیه',
-                  child: TextField(
-                    controller: _stepController,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          if (_selStart != null)
-            Text(
-              _selEnd != null
-                  ? 'انتخاب: ${_selStart!.inSeconds} تا ${_selEnd!.inSeconds} ثانیه'
-                  : 'شروع انتخاب: ${_selStart!.inSeconds} ثانیه',
-            ),
-          if (_isBusy)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 4),
-              child: Text('در حال برش…'),
-            ),
           // وسط صفحه فقط برای پیش‌نمایش تصویر در نظر گرفته شده است، خالی می‌ماند
           Expanded(
             child: Center(
               child: SizedBox.shrink(),
             ),
           ),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Semantics(
-                label: 'پرش به ابتدا',
-                button: true,
-                child: IconButton(
-                  icon: const Icon(Icons.skip_previous),
-                  onPressed: _file == null ? null : () => _seek(-_pos.inSeconds.toDouble()),
+          if (_isBusy)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 4),
+              child: Text('در حال برش…'),
+            ),
+          // وضعیت پخش، گام پرش، و انتخاب، همه در یک خط درست بالای کلیدهای پخش
+          Semantics(
+            label: 'موقعیت پخش: ${_pos.inSeconds} ثانیه از ${_len.inSeconds} ثانیه'
+                '${_selStart != null ? (_selEnd != null ? '، انتخاب از ${_selStart!.inSeconds} تا ${_selEnd!.inSeconds} ثانیه' : '، شروع انتخاب در ${_selStart!.inSeconds} ثانیه') : ''}',
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  '${_pos.inSeconds} / ${_len.inSeconds} ثانیه',
+                  style: Theme.of(context).textTheme.bodyMedium,
                 ),
-              ),
-              Semantics(
-                label: '${_stepSeconds.toStringAsFixed(1)} ثانیه عقب',
-                button: true,
-                child: IconButton(
+                const SizedBox(width: 12),
+                const Text('گام: '),
+                SizedBox(
+                  width: 50,
+                  height: 36,
+                  child: ExcludeSemantics(
+                    child: TextField(
+                      controller: _stepController,
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+                if (_selStart != null) ...[
+                  const SizedBox(width: 12),
+                  Text(
+                    _selEnd != null
+                        ? '${_selStart!.inSeconds}-${_selEnd!.inSeconds} ث'
+                        : '${_selStart!.inSeconds} ث',
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          // کلیدهای کنترل پخش همیشه به ترتیب چپ به راست ثابت می‌مانند
+          // تا با روال معمول پخش‌کننده‌های رسانه هماهنگ باشند و برعکس نشوند
+          Directionality(
+            textDirection: TextDirection.ltr,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.skip_previous),
+                  tooltip: 'پرش به ابتدا',
+                  onPressed: _file == null
+                      ? null
+                      : () => _seek(-_pos.inSeconds.toDouble()),
+                ),
+                IconButton(
                   icon: const Icon(Icons.replay_5),
+                  tooltip: '${_stepSeconds.toStringAsFixed(1)} ثانیه عقب',
                   onPressed: _file == null ? null : () => _seek(-_stepSeconds),
                 ),
-              ),
-              Semantics(
-                label: 'پخش یا توقف',
-                button: true,
-                child: IconButton(
+                IconButton(
                   iconSize: 40,
                   icon: Icon(_player.state == PlayerState.playing
                       ? Icons.pause_circle
                       : Icons.play_circle),
+                  tooltip: _player.state == PlayerState.playing
+                      ? 'توقف پخش'
+                      : 'شروع پخش',
                   onPressed: _file == null ? null : _togglePlay,
                 ),
-              ),
-              Semantics(
-                label: '${_stepSeconds.toStringAsFixed(1)} ثانیه جلو',
-                button: true,
-                child: IconButton(
+                IconButton(
                   icon: const Icon(Icons.forward_5),
+                  tooltip: '${_stepSeconds.toStringAsFixed(1)} ثانیه جلو',
                   onPressed: _file == null ? null : () => _seek(_stepSeconds),
                 ),
-              ),
-              Semantics(
-                label: 'پرش به انتها',
-                button: true,
-                child: IconButton(
+                IconButton(
                   icon: const Icon(Icons.skip_next),
+                  tooltip: 'پرش به انتها',
                   onPressed: _file == null
                       ? null
                       : () => _seek((_len - _pos).inSeconds.toDouble()),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           const SizedBox(height: 8),
           Row(
@@ -776,6 +775,7 @@ class _EditTabState extends State<EditTab> {
                 button: true,
                 child: IconButton(
                   icon: Icon(_selectionButtonIcon()),
+                  tooltip: _selectionButtonLabel(),
                   onPressed: _file == null ? null : _markSelection,
                 ),
               ),
