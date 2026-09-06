@@ -9,6 +9,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
+import 'package:video_player/video_player.dart';
 import 'package:ffmpeg_kit_flutter_new_min/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new_min/return_code.dart';
 
@@ -502,6 +503,9 @@ class EditTab extends StatefulWidget {
 
 class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
   final AudioPlayer _player = AudioPlayer();
+  VideoPlayerController? _videoController;
+  // برای جلوگیری از فراخوانی چندباره‌ی پایان پخش ویدیو در هر تیک از لیسنر
+  bool _videoCompletedHandled = false;
   final TextEditingController _stepController =
       TextEditingController(text: '5.0');
   bool _isVideo = false; // false = صدا، true = تصویر
@@ -515,19 +519,64 @@ class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
   String? _trimmedFile;
   bool _isBusy = false;
 
+  bool get _isPlaying => _isVideo
+      ? (_videoController?.value.isPlaying ?? false)
+      : _player.state == PlayerState.playing;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _player.onPositionChanged.listen((d) => setState(() => _pos = d));
-    _player.onDurationChanged.listen((d) => setState(() => _len = d));
+    _player.onPositionChanged.listen((d) {
+      if (!_isVideo) setState(() => _pos = d);
+    });
+    _player.onDurationChanged.listen((d) {
+      if (!_isVideo) setState(() => _len = d);
+    });
     // بدون این قسمت، بعد از رسیدن پخش به انتها کلیدهای عقب و ابتدا
     // دیگر کار نمی‌کردند چون پخش‌کننده در حالت پایان‌یافته گیر می‌کرد
     _player.onPlayerComplete.listen((_) async {
+      if (_isVideo) return;
       await _player.seek(Duration.zero);
       await _player.pause();
       if (mounted) setState(() => _pos = Duration.zero);
     });
+  }
+
+  // هر تغییر وضعیت ویدیو (پخش، مکث، پیشرفت زمان) از این‌جا دریافت می‌شود
+  void _onVideoTick() {
+    final controller = _videoController;
+    if (!mounted || controller == null) return;
+    final value = controller.value;
+    setState(() {
+      _pos = value.position;
+      _len = value.duration;
+    });
+    // معادل onPlayerComplete برای ویدیو: وقتی پخش به انتها رسید، به ابتدا برگرد
+    if (value.duration > Duration.zero && value.position >= value.duration) {
+      if (!_videoCompletedHandled) {
+        _videoCompletedHandled = true;
+        controller.seekTo(Duration.zero);
+        controller.pause();
+      }
+    } else {
+      _videoCompletedHandled = false;
+    }
+  }
+
+  // فایل ویدیویی تازه را بارگذاری و به پخش‌کننده‌ی ویدیو وصل می‌کند
+  Future<void> _openVideoFile(String path) async {
+    final old = _videoController;
+    _videoController = null;
+    old?.removeListener(_onVideoTick);
+    await old?.dispose();
+    _videoCompletedHandled = false;
+    final controller = VideoPlayerController.file(File(path));
+    controller.addListener(_onVideoTick);
+    await controller.initialize();
+    _videoController = controller;
+    _pos = controller.value.position;
+    _len = controller.value.duration;
   }
 
   @override
@@ -541,15 +590,28 @@ class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
 
   Future<void> _reconnectPlayer() async {
     final resumeAt = _pos;
-    final wasPlaying = _player.state == PlayerState.playing;
-    try {
-      await _player.setSource(DeviceFileSource(_file!));
-      await _player.seek(resumeAt);
-      if (wasPlaying) {
-        await _player.resume();
+    if (_isVideo) {
+      final wasPlaying = _videoController?.value.isPlaying ?? false;
+      try {
+        await _openVideoFile(_file!);
+        await _videoController?.seekTo(resumeAt);
+        if (wasPlaying) {
+          await _videoController?.play();
+        }
+      } catch (_) {
+        // اگر وصل شدن دوباره ناموفق بود، حداقل رابط کاربری قفل نمی‌ماند
       }
-    } catch (_) {
-      // اگر وصل شدن دوباره ناموفق بود، حداقل رابط کاربری قفل نمی‌ماند
+    } else {
+      final wasPlaying = _player.state == PlayerState.playing;
+      try {
+        await _player.setSource(DeviceFileSource(_file!));
+        await _player.seek(resumeAt);
+        if (wasPlaying) {
+          await _player.resume();
+        }
+      } catch (_) {
+        // اگر وصل شدن دوباره ناموفق بود، حداقل رابط کاربری قفل نمی‌ماند
+      }
     }
     if (mounted) setState(() {});
   }
@@ -558,12 +620,31 @@ class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _player.dispose();
+    _videoController?.removeListener(_onVideoTick);
+    _videoController?.dispose();
     _stepController.dispose();
     super.dispose();
   }
 
   double get _stepSeconds =>
       double.tryParse(_stepController.text.replaceAll(',', '.')) ?? 5.0;
+
+  // با عوض شدن نوع صدا/تصویر، چون هر کدام پخش‌کننده‌ی جدا دارند،
+  // فایل و وضعیت پخش قبلی برای جلوگیری از ناهماهنگی پاک می‌شود
+  // (قطعه‌های قبلاً انتخاب‌شده از فایل‌های دیگر دست‌نخورده باقی می‌مانند)
+  Future<void> _switchMode(bool video) async {
+    if (video == _isVideo) return;
+    await _player.pause();
+    await _videoController?.pause();
+    setState(() {
+      _isVideo = video;
+      _file = null;
+      _pendingStart = null;
+      _trimmedFile = null;
+      _pos = Duration.zero;
+      _len = Duration.zero;
+    });
+  }
 
   Future<void> _open() async {
     final res = await FilePicker.platform.pickFiles(
@@ -576,23 +657,47 @@ class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
       // اما قطعه‌های قبلاً کامل‌شده از فایل‌های دیگر نگه داشته می‌شوند
       _pendingStart = null;
       _trimmedFile = null;
-      await _player.setSource(DeviceFileSource(_file!));
+      try {
+        if (_isVideo) {
+          await _openVideoFile(_file!);
+        } else {
+          await _player.setSource(DeviceFileSource(_file!));
+        }
+      } catch (e) {
+        _snack('خطا در باز کردن فایل');
+        return;
+      }
       if (mounted) setState(() {});
     }
   }
 
   Future<void> _togglePlay() async {
-    if (_player.state == PlayerState.playing) {
-      await _player.pause();
+    if (_isVideo) {
+      final controller = _videoController;
+      if (controller == null) return;
+      if (controller.value.isPlaying) {
+        await controller.pause();
+      } else {
+        await controller.play();
+      }
     } else {
-      await _player.resume();
+      if (_player.state == PlayerState.playing) {
+        await _player.pause();
+      } else {
+        await _player.resume();
+      }
     }
     if (mounted) setState(() {});
   }
 
   Future<void> _seek(double seconds) async {
     final d = _pos + Duration(milliseconds: (seconds * 1000).round());
-    await _player.seek(d < Duration.zero ? Duration.zero : d);
+    final target = d < Duration.zero ? Duration.zero : d;
+    if (_isVideo) {
+      await _videoController?.seekTo(target);
+    } else {
+      await _player.seek(target);
+    }
   }
 
   Duration get _totalSelected => _selections.fold(
@@ -770,7 +875,7 @@ class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
                     Radio<bool>(
                       value: false,
                       groupValue: _isVideo,
-                      onChanged: (v) => setState(() => _isVideo = v ?? false),
+                      onChanged: (v) => _switchMode(v ?? false),
                     ),
                     const Text('صدا'),
                   ],
@@ -784,7 +889,7 @@ class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
                     Radio<bool>(
                       value: true,
                       groupValue: _isVideo,
-                      onChanged: (v) => setState(() => _isVideo = v ?? true),
+                      onChanged: (v) => _switchMode(v ?? true),
                     ),
                     const Text('تصویر'),
                   ],
@@ -793,10 +898,20 @@ class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
             ],
           ),
           const SizedBox(height: 8),
-          // وسط صفحه فقط برای پیش‌نمایش تصویر در نظر گرفته شده است، خالی می‌ماند
+          // در حالت تصویر، پیش‌نمایش ویدیو این‌جا نشان داده می‌شود
+          // در حالت صدا یا وقتی هنوز فایلی باز نشده، این بخش خالی می‌ماند
           Expanded(
             child: Center(
-              child: SizedBox.shrink(),
+              child: (_isVideo &&
+                      _videoController != null &&
+                      _videoController!.value.isInitialized)
+                  ? AspectRatio(
+                      aspectRatio: _videoController!.value.aspectRatio,
+                      child: ExcludeSemantics(
+                        child: VideoPlayer(_videoController!),
+                      ),
+                    )
+                  : const SizedBox.shrink(),
             ),
           ),
           if (_isBusy)
@@ -875,12 +990,9 @@ class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
                 ),
                 IconButton(
                   iconSize: 40,
-                  icon: Icon(_player.state == PlayerState.playing
-                      ? Icons.pause_circle
-                      : Icons.play_circle),
-                  tooltip: _player.state == PlayerState.playing
-                      ? 'توقف پخش'
-                      : 'شروع پخش',
+                  icon: Icon(
+                      _isPlaying ? Icons.pause_circle : Icons.play_circle),
+                  tooltip: _isPlaying ? 'توقف پخش' : 'شروع پخش',
                   onPressed: _file == null ? null : _togglePlay,
                 ),
                 IconButton(
