@@ -15,7 +15,7 @@ import 'package:ffmpeg_kit_flutter_new_min/return_code.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // برای این‌که پخش صدا با خاموش شدن صفحه قطع نشود
-  await AudioPlayer.global.setAudioContext(const AudioContext(
+  await AudioPlayer.global.setAudioContext(AudioContext(
     android: AudioContextAndroid(
       isSpeakerphoneOn: false,
       stayAwake: true,
