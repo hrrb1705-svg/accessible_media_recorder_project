@@ -12,7 +12,20 @@ import 'package:record/record.dart';
 import 'package:ffmpeg_kit_flutter_new_min/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new_min/return_code.dart';
 
-void main() => runApp(const AccessibleMediaRecorderApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // برای این‌که پخش صدا با خاموش شدن صفحه قطع نشود
+  await AudioPlayer.global.setAudioContext(const AudioContext(
+    android: AudioContextAndroid(
+      isSpeakerphoneOn: false,
+      stayAwake: true,
+      contentType: AndroidContentType.music,
+      usageType: AndroidUsageType.media,
+      audioFocus: AndroidAudioFocus.gain,
+    ),
+  ));
+  runApp(const AccessibleMediaRecorderApp());
+}
 
 class AccessibleMediaRecorderApp extends StatelessWidget {
   const AccessibleMediaRecorderApp({super.key});
@@ -48,10 +61,50 @@ class HomePage extends StatefulWidget {
 class _HomePageState extends State<HomePage> {
   int _tab = 0;
 
+  Future<void> _confirmExit() async {
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('خروج از برنامه'),
+        content: const Text(
+            'همه‌ی اطلاعات ذخیره‌نشده پاک می‌شود و برنامه بسته می‌شود. ادامه می‌دهید؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('انصراف'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('خروج'),
+          ),
+        ],
+      ),
+    );
+    if (sure == true) {
+      SystemNavigator.pop();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('ضبط رسانه دسترس‌پذیر')),
+      appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.exit_to_app),
+          tooltip: 'خروج از برنامه و پاک کردن اطلاعات',
+          onPressed: _confirmExit,
+        ),
+        title: const Text('ضبط رسانه دسترس‌پذیر'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.help_outline),
+            tooltip: 'راهنما',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const HelpPage()),
+            ),
+          ),
+        ],
+      ),
       body: _tab == 0 ? const RecordTab() : const EditTab(),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _tab,
@@ -60,6 +113,22 @@ class _HomePageState extends State<HomePage> {
           BottomNavigationBarItem(icon: Icon(Icons.mic), label: 'ضبط'),
           BottomNavigationBarItem(icon: Icon(Icons.content_cut), label: 'ویرایش'),
         ],
+      ),
+    );
+  }
+}
+
+/// صفحه‌ی راهنما؛ فعلاً جای‌نگهدار است و بعد از پایان پروژه کامل می‌شود
+class HelpPage extends StatelessWidget {
+  const HelpPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('راهنما')),
+      body: const Padding(
+        padding: EdgeInsets.all(16),
+        child: Text('راهنمای برنامه بعداً اینجا تکمیل می‌شود.'),
       ),
     );
   }
@@ -431,7 +500,7 @@ class EditTab extends StatefulWidget {
   State<EditTab> createState() => _EditTabState();
 }
 
-class _EditTabState extends State<EditTab> {
+class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
   final AudioPlayer _player = AudioPlayer();
   final TextEditingController _stepController =
       TextEditingController(text: '5.0');
@@ -440,13 +509,16 @@ class _EditTabState extends State<EditTab> {
   Duration _len = Duration.zero;
   String? _file;
   Duration? _pendingStart;
-  final List<MapEntry<Duration, Duration>> _selections = [];
+  // هر قطعه‌ی انتخابی به همراه مسیر فایلی که از آن گرفته شده نگه داشته می‌شود
+  // تا با باز کردن فایل تازه، قطعه‌های فایل‌های قبلی پاک نشوند
+  final List<(String, Duration, Duration)> _selections = [];
   String? _trimmedFile;
   bool _isBusy = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _player.onPositionChanged.listen((d) => setState(() => _pos = d));
     _player.onDurationChanged.listen((d) => setState(() => _len = d));
     // بدون این قسمت، بعد از رسیدن پخش به انتها کلیدهای عقب و ابتدا
@@ -459,7 +531,32 @@ class _EditTabState extends State<EditTab> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // بعد از روشن شدن دوباره‌ی صفحه، پخش‌کننده را دوباره به فایل وصل می‌کنیم
+    // چون در نسخه‌ی قبل کلیدهای کنترل پس از خاموش و روشن شدن صفحه از کار می‌افتادند
+    if (state == AppLifecycleState.resumed && _file != null) {
+      _reconnectPlayer();
+    }
+  }
+
+  Future<void> _reconnectPlayer() async {
+    final resumeAt = _pos;
+    final wasPlaying = _player.state == PlayerState.playing;
+    try {
+      await _player.setSource(DeviceFileSource(_file!));
+      await _player.seek(resumeAt);
+      if (wasPlaying) {
+        await _player.resume();
+      }
+    } catch (_) {
+      // اگر وصل شدن دوباره ناموفق بود، حداقل رابط کاربری قفل نمی‌ماند
+    }
+    if (mounted) setState(() {});
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _player.dispose();
     _stepController.dispose();
     super.dispose();
@@ -475,8 +572,9 @@ class _EditTabState extends State<EditTab> {
     );
     if (res != null && res.files.single.path != null) {
       _file = res.files.single.path;
+      // یک شروع ناتمام از فایل قبلی معنایی در فایل تازه ندارد، لغو می‌شود
+      // اما قطعه‌های قبلاً کامل‌شده از فایل‌های دیگر نگه داشته می‌شوند
       _pendingStart = null;
-      _selections.clear();
       _trimmedFile = null;
       await _player.setSource(DeviceFileSource(_file!));
       if (mounted) setState(() {});
@@ -498,12 +596,13 @@ class _EditTabState extends State<EditTab> {
   }
 
   Duration get _totalSelected => _selections.fold(
-      Duration.zero, (sum, e) => sum + (e.value - e.key));
+      Duration.zero, (sum, seg) => sum + (seg.$3 - seg.$2));
 
   // هر بار فشردن این کلید یک نقطه ثبت می‌کند؛ اولین بار شروع یک قطعه
   // و بار دوم پایان همان قطعه است. با این کار می‌توان چند قطعه‌ی
-  // جدا از هم انتخاب کرد، نه فقط یک قطعه‌ی آخر
+  // جدا از هم، حتی از چند فایل مختلف، انتخاب کرد
   void _markSelection() {
+    if (_file == null) return;
     setState(() {
       if (_pendingStart == null) {
         _pendingStart = _pos;
@@ -511,7 +610,7 @@ class _EditTabState extends State<EditTab> {
         final start = _pendingStart!;
         final end = _pos;
         if (end > start) {
-          _selections.add(MapEntry(start, end));
+          _selections.add((_file!, start, end));
         }
         _pendingStart = null;
       }
@@ -535,23 +634,23 @@ class _EditTabState extends State<EditTab> {
   }
 
   Future<void> _trim() async {
-    if (_file == null || _selections.isEmpty) return;
+    if (_selections.isEmpty) return;
     setState(() => _isBusy = true);
     try {
       final tempDir = await getTemporaryDirectory();
-      // پسوند خروجی همان پسوند فایل ورودی است، چون کدک تغییر نمی‌کند
-      final ext = _file!.split('.').last;
       final ts = DateTime.now().millisecondsSinceEpoch;
 
-      // قدم اول: هر قطعه‌ی انتخاب‌شده را جداگانه برش می‌دهیم
+      // قدم اول: هر قطعه‌ی انتخاب‌شده را از فایل خودش جداگانه برش می‌دهیم
       final segmentPaths = <String>[];
       for (var i = 0; i < _selections.length; i++) {
         final seg = _selections[i];
-        final startSec = seg.key.inMilliseconds / 1000.0;
-        final durSec = (seg.value - seg.key).inMilliseconds / 1000.0;
+        final segFile = seg.$1;
+        final startSec = seg.$2.inMilliseconds / 1000.0;
+        final durSec = (seg.$3 - seg.$2).inMilliseconds / 1000.0;
+        final ext = segFile.split('.').last;
         final segPath = '${tempDir.path}/seg_${ts}_$i.$ext';
         final cmd =
-            '-y -ss $startSec -i "${_file!}" -t $durSec -c copy "$segPath"';
+            '-y -ss $startSec -i "$segFile" -t $durSec -c copy "$segPath"';
         final session = await FFmpegKit.execute(cmd);
         if (!ReturnCode.isSuccess(await session.getReturnCode())) {
           throw Exception('segment $i failed');
@@ -560,6 +659,8 @@ class _EditTabState extends State<EditTab> {
       }
 
       // قدم دوم: اگر بیش از یک قطعه بود، همه را پشت سر هم می‌چسبانیم
+      // این فرض می‌کند فایل‌های ورودی همگی با تنظیمات یکسان (خروجی همین برنامه) ضبط شده‌اند
+      final outExt = _selections.first.$1.split('.').last;
       String outPath;
       if (segmentPaths.length == 1) {
         outPath = segmentPaths.first;
@@ -568,7 +669,7 @@ class _EditTabState extends State<EditTab> {
         final listContent =
             segmentPaths.map((p) => "file '$p'").join('\n');
         await listFile.writeAsString(listContent);
-        outPath = '${tempDir.path}/trim_$ts.$ext';
+        outPath = '${tempDir.path}/trim_$ts.$outExt';
         final concatCmd = '-y -f concat -safe 0 -i "${listFile.path}" '
             '-c copy "$outPath"';
         final session = await FFmpegKit.execute(concatCmd);
