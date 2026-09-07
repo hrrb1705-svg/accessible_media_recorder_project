@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:audioplayers/audioplayers.dart';
+import 'package:camera/camera.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -65,6 +66,7 @@ class _HomePageState extends State<HomePage> {
   Future<void> _confirmExit() async {
     final sure = await showDialog<bool>(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         title: const Text('خروج از برنامه'),
         content: const Text(
@@ -160,6 +162,9 @@ class _RecordTabState extends State<RecordTab> {
   Timer? _elapsedTimer;
   int _elapsedSeconds = 0;
   String? _tempFile;
+  List<CameraDescription>? _cameras;
+  CameraController? _cameraController;
+  bool _cameraInitializing = false;
 
   @override
   void initState() {
@@ -176,13 +181,64 @@ class _RecordTabState extends State<RecordTab> {
     _countdownTimer?.cancel();
     _elapsedTimer?.cancel();
     _recorder.dispose();
+    _cameraController?.dispose();
     _mainButtonFocus.dispose();
     super.dispose();
   }
 
+  // دوربین را برای پیش‌نمایش و ضبط ویدیو آماده می‌کند؛ اگر قبلاً آماده بود کاری نمی‌کند
+  Future<void> _initCamera() async {
+    if (_cameraController != null) return;
+    setState(() => _cameraInitializing = true);
+    try {
+      _cameras ??= await availableCameras();
+      if (_cameras == null || _cameras!.isEmpty) {
+        _snack('دوربینی پیدا نشد');
+        return;
+      }
+      final controller = CameraController(
+        _cameras!.first,
+        ResolutionPreset.medium,
+        enableAudio: true,
+      );
+      await controller.initialize();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+      setState(() => _cameraController = controller);
+    } catch (e) {
+      _snack('خطا در راه‌اندازی دوربین');
+    } finally {
+      if (mounted) setState(() => _cameraInitializing = false);
+    }
+  }
+
+  Future<void> _disposeCamera() async {
+    final controller = _cameraController;
+    _cameraController = null;
+    await controller?.dispose();
+  }
+
+  // با تعویض رادیوی صدا/تصویر، دوربین بر حسب نیاز روشن یا خاموش می‌شود
+  Future<void> _setIsVideo(bool video) async {
+    if (_state != _RecState.idle || video == _isVideo) return;
+    setState(() => _isVideo = video);
+    if (video) {
+      await _initCamera();
+    } else {
+      await _disposeCamera();
+    }
+  }
+
   Future<bool> _ensurePermission() async {
-    final p = _isVideo ? Permission.camera : Permission.microphone;
-    return await p.request().isGranted;
+    if (_isVideo) {
+      // ضبط ویدیو هم به دوربین نیاز دارد هم به میکروفون، چون صدای ویدیو هم ضبط می‌شود
+      final cam = await Permission.camera.request();
+      final mic = await Permission.microphone.request();
+      return cam.isGranted && mic.isGranted;
+    }
+    return await Permission.microphone.request().isGranted;
   }
 
   void _focusMainButtonNextFrame() {
@@ -213,6 +269,15 @@ class _RecordTabState extends State<RecordTab> {
       _snack('دسترسی لازم داده نشد');
       return;
     }
+    if (_isVideo) {
+      if (_cameraController == null || !_cameraController!.value.isInitialized) {
+        await _initCamera();
+      }
+      if (_cameraController == null) {
+        _snack('دوربین آماده نیست');
+        return;
+      }
+    }
     final dir = await getApplicationDocumentsDirectory();
     final ext = _isVideo ? 'mp4' : 'm4a';
     final path =
@@ -230,11 +295,17 @@ class _RecordTabState extends State<RecordTab> {
       try {
         await Permission.notification.request();
         await _serviceChannel.invokeMethod('start');
-        await _recorder.start(const RecordConfig(encoder: AudioEncoder.aacLc),
-            path: path);
+        if (_isVideo) {
+          // مسیر فایل نهایی را خود بسته‌ی دوربین مشخص می‌کند، بعد از پایان ضبط گرفته می‌شود
+          await _cameraController!.startVideoRecording();
+        } else {
+          await _recorder.start(
+              const RecordConfig(encoder: AudioEncoder.aacLc),
+              path: path);
+        }
         setState(() {
           _state = _RecState.recording;
-          _tempFile = path;
+          _tempFile = _isVideo ? null : path;
           _elapsedSeconds = 0;
         });
         _startElapsedTimer();
@@ -248,7 +319,11 @@ class _RecordTabState extends State<RecordTab> {
 
   Future<void> _pause() async {
     try {
-      await _recorder.pause();
+      if (_isVideo) {
+        await _cameraController?.pauseVideoRecording();
+      } else {
+        await _recorder.pause();
+      }
       _stopElapsedTimer();
       setState(() => _state = _RecState.paused);
       _focusMainButtonNextFrame();
@@ -259,7 +334,11 @@ class _RecordTabState extends State<RecordTab> {
 
   Future<void> _resume() async {
     try {
-      await _recorder.resume();
+      if (_isVideo) {
+        await _cameraController?.resumeVideoRecording();
+      } else {
+        await _recorder.resume();
+      }
       _startElapsedTimer();
       setState(() => _state = _RecState.recording);
       _focusMainButtonNextFrame();
@@ -269,7 +348,17 @@ class _RecordTabState extends State<RecordTab> {
   }
 
   Future<void> _finish() async {
-    final path = await _recorder.stop();
+    String? path;
+    if (_isVideo) {
+      try {
+        final file = await _cameraController?.stopVideoRecording();
+        path = file?.path;
+      } catch (e) {
+        _snack('خطا در پایان ضبط ویدیو');
+      }
+    } else {
+      path = await _recorder.stop();
+    }
     _stopElapsedTimer();
     await _serviceChannel.invokeMethod('stop');
     setState(() {
@@ -286,6 +375,7 @@ class _RecordTabState extends State<RecordTab> {
     final controller = TextEditingController(text: defaultBase);
     final chosenBase = await showDialog<String>(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) {
         return AlertDialog(
           title: const Text('نام فایل برای ذخیره'),
@@ -402,7 +492,7 @@ class _RecordTabState extends State<RecordTab> {
                       value: false,
                       groupValue: _isVideo,
                       onChanged: _state == _RecState.idle
-                          ? (v) => setState(() => _isVideo = v ?? false)
+                          ? (v) => _setIsVideo(v ?? false)
                           : null,
                     ),
                     const Text('صدا'),
@@ -418,7 +508,7 @@ class _RecordTabState extends State<RecordTab> {
                       value: true,
                       groupValue: _isVideo,
                       onChanged: _state == _RecState.idle
-                          ? (v) => setState(() => _isVideo = v ?? true)
+                          ? (v) => _setIsVideo(v ?? true)
                           : null,
                     ),
                     const Text('تصویر'),
@@ -444,7 +534,29 @@ class _RecordTabState extends State<RecordTab> {
                         style: Theme.of(context).textTheme.headlineSmall,
                       ),
                     ),
-                  // این فضا برای پیش‌نمایش تصویر در حین ضبط ویدیو در نظر گرفته شده است
+                  // پیش‌نمایش زنده‌ی دوربین برای حالت تصویر؛ در حالت صدا چیزی نشان داده نمی‌شود
+                  if (_isVideo)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: (_cameraController != null &&
+                              _cameraController!.value.isInitialized)
+                          ? SizedBox(
+                              width: MediaQuery.of(context).size.width * 0.75,
+                              child: AspectRatio(
+                                aspectRatio:
+                                    _cameraController!.value.aspectRatio,
+                                child: ExcludeSemantics(
+                                  child: CameraPreview(_cameraController!),
+                                ),
+                              ),
+                            )
+                          : (_cameraInitializing
+                              ? const Padding(
+                                  padding: EdgeInsets.all(12),
+                                  child: CircularProgressIndicator(),
+                                )
+                              : const SizedBox.shrink()),
+                    ),
                 ],
               ),
             ),
@@ -522,6 +634,10 @@ class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
   bool get _isPlaying => _isVideo
       ? (_videoController?.value.isPlaying ?? false)
       : _player.state == PlayerState.playing;
+
+  // تا وقتی قطعه‌ای انتخاب‌شده (کامل یا در حال انتخاب) هست، عوض کردن
+  // صدا/تصویر مجاز نیست، چون هر کدام پخش‌کننده‌ی جدا و ناسازگار دارند
+  bool get _modeLocked => _selections.isNotEmpty || _pendingStart != null;
 
   @override
   void initState() {
@@ -633,7 +749,7 @@ class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
   // فایل و وضعیت پخش قبلی برای جلوگیری از ناهماهنگی پاک می‌شود
   // (قطعه‌های قبلاً انتخاب‌شده از فایل‌های دیگر دست‌نخورده باقی می‌مانند)
   Future<void> _switchMode(bool video) async {
-    if (video == _isVideo) return;
+    if (video == _isVideo || _modeLocked) return;
     await _player.pause();
     await _videoController?.pause();
     setState(() {
@@ -801,6 +917,7 @@ class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
     final controller = TextEditingController(text: defaultBase);
     final chosenBase = await showDialog<String>(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) {
         return AlertDialog(
           title: const Text('نام فایل برای ذخیره'),
@@ -875,7 +992,9 @@ class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
                     Radio<bool>(
                       value: false,
                       groupValue: _isVideo,
-                      onChanged: (v) => _switchMode(v ?? false),
+                      onChanged: _modeLocked
+                          ? null
+                          : (v) => _switchMode(v ?? false),
                     ),
                     const Text('صدا'),
                   ],
@@ -889,7 +1008,8 @@ class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
                     Radio<bool>(
                       value: true,
                       groupValue: _isVideo,
-                      onChanged: (v) => _switchMode(v ?? true),
+                      onChanged:
+                          _modeLocked ? null : (v) => _switchMode(v ?? true),
                     ),
                     const Text('تصویر'),
                   ],
@@ -897,6 +1017,21 @@ class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
               ),
             ],
           ),
+          if (_modeLocked)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Semantics(
+                label:
+                    'برای تعویض صدا و تصویر، ابتدا قطعه‌های انتخاب‌شده را برش بزنید و ذخیره کنید، یا با پاک کردن آن‌ها انصراف دهید',
+                child: ExcludeSemantics(
+                  child: Text(
+                    'تا برش و ذخیره یا پاک کردن قطعه‌ها، نوع فایل قابل تغییر نیست',
+                    style: Theme.of(context).textTheme.bodySmall,
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            ),
           const SizedBox(height: 8),
           // در حالت تصویر، پیش‌نمایش ویدیو این‌جا نشان داده می‌شود
           // در حالت صدا یا وقتی هنوز فایلی باز نشده، این بخش خالی می‌ماند
