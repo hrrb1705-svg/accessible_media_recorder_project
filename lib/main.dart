@@ -62,6 +62,36 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int _tab = 0;
+  final GlobalKey<_RecordTabState> _recordKey = GlobalKey<_RecordTabState>();
+  final GlobalKey<_EditTabState> _editKey = GlobalKey<_EditTabState>();
+
+  // اگر در برگه‌ی فعلی کار نیمه‌تمامی وجود داشته باشد، قبل از جابه‌جایی تایید می‌گیرد
+  Future<bool> _confirmLeaveCurrentTabIfNeeded() async {
+    final hasWork = _tab == 0
+        ? (_recordKey.currentState?.hasUnsavedWork() ?? false)
+        : (_editKey.currentState?.hasUnsavedWork() ?? false);
+    if (!hasWork) return true;
+    final sure = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('رفتن به برگه دیگر'),
+        content: const Text(
+            'کاری که در این برگه نیمه‌تمام است ذخیره نشده و با رفتن به برگه دیگر از بین می‌رود. ادامه می‌دهید؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('انصراف'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('بله، ادامه بده'),
+          ),
+        ],
+      ),
+    );
+    return sure == true;
+  }
 
   Future<void> _confirmExit() async {
     final sure = await showDialog<bool>(
@@ -108,10 +138,14 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
-      body: _tab == 0 ? const RecordTab() : const EditTab(),
+      body: _tab == 0 ? RecordTab(key: _recordKey) : EditTab(key: _editKey),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _tab,
-        onTap: (i) => setState(() => _tab = i),
+        onTap: (i) async {
+          if (i == _tab) return;
+          final ok = await _confirmLeaveCurrentTabIfNeeded();
+          if (ok && mounted) setState(() => _tab = i);
+        },
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.mic), label: 'ضبط'),
           BottomNavigationBarItem(icon: Icon(Icons.content_cut), label: 'ویرایش'),
@@ -121,17 +155,48 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-/// صفحه‌ی راهنما؛ فعلاً جای‌نگهدار است و بعد از پایان پروژه کامل می‌شود
+/// صفحه‌ی راهنما: شرح کوتاه و مرحله‌ای نحوه‌ی کار با هر دو برگه
 class HelpPage extends StatelessWidget {
   const HelpPage({super.key});
+
+  static const String _guideText = '''ضبط و ویرایش فایل‌های دسترس‌پذیر توسط حمیدرضا رحیمی با کمک AI
+
+این برنامه دو برگه دارد: برگه ضبط و برگه ویرایش. با کلیدهای پایین صفحه بین این دو جابه‌جا می‌شوید.
+
+برگه ضبط
+
+ابتدا با دکمه‌های رادیویی صدا یا تصویر را انتخاب کنید؛ این انتخاب فقط وقتی چیزی در حال ضبط نیست قابل تغییر است. با زدن کلید شروع ضبط، سه ثانیه شمارش معکوس انجام می‌شود و سپس ضبط آغاز می‌شود. همان کلید در حین ضبط به توقف موقت تبدیل می‌شود و با زدن دوباره‌اش ضبط ادامه می‌یابد. کلید جداگانه‌ای برای پایان کامل ضبط هست؛ بعد از پایان، کلید ذخیره فعال می‌شود و با زدنش پنجره‌ای برای وارد کردن نام فایل باز می‌شود. فایل نهایی در پوشه‌ی acc-rec در حافظه‌ی گوشی ذخیره می‌شود.
+
+در حالت تصویر، پیش‌نمایش زنده‌ی دوربین در وسط صفحه نشان داده می‌شود و صدا و تصویر با هم ضبط می‌شوند.
+
+ضبط با یک سرویس پیش‌زمینه انجام می‌شود، یعنی حتی با خاموش کردن صفحه یا خروج موقت از برنامه متوقف نمی‌شود. یک ترفند مفید برای ضبط صدا این است که بعد از شروع ضبط، صفحه را خاموش کنید تا صدای صفحه‌خوان ناخواسته در فایل ضبط نشود؛ با روشن شدن دوباره‌ی صفحه، برنامه ضبط را خودش موقتاً متوقف می‌کند تا پیش از ادامه، فرصت بررسی وضعیت داشته باشید. برای ضبط تصویر این ترفند مناسب نیست، چون تا زمانی که صفحه دوباره روشن شود، ضبط تصویر همچنان ادامه دارد؛ در این حالت بهتر است از همان کلید توقف موقت که به‌طور خودکار کانون صفحه‌خوان روی آن است استفاده کنید، بدون نیاز به جست‌وجوی صفحه.
+
+برگه ویرایش
+
+ابتدا نوع فایل، صدا یا تصویر، را انتخاب کنید و با کلید باز کردن فایل، فایل مورد نظر را از حافظه‌ی گوشی انتخاب کنید. برای فایل تصویری، پیش‌نمایش آن در وسط صفحه نشان داده می‌شود.
+
+با کلید میانی پخش را شروع یا متوقف کنید. کلیدهای کنار آن، پخش را به اندازه‌ی مقدار نوشته‌شده در جعبه‌ی گام، به جلو یا عقب می‌برند، و دو کلید در دو انتها برای پرش مستقیم به ابتدا یا انتهای فایل هستند.
+
+برای بریدن بخشی از فایل، در لحظه‌ی شروع بخش موردنظر کلید علامت‌گذاری را بزنید و در لحظه‌ی پایان همان بخش دوباره همان کلید را بزنید تا قطعه کامل شود. می‌توانید چند قطعه از یک فایل انتخاب کنید؛ هنگام برش، همه‌ی قطعه‌ها پشت سر هم در یک فایل خروجی قرار می‌گیرند. تا وقتی قطعه‌ای انتخاب‌شده یا نیمه‌انتخاب دارید، تغییر بین صدا و تصویر ممکن نیست؛ ابتدا باید قطعه‌ها را برش بزنید و ذخیره کنید یا آن‌ها را کنار بگذارید.
+
+بعد از برش، کلید ذخیره فعال می‌شود و مانند برگه ضبط، پنجره‌ی نام فایل باز می‌شود و نتیجه در همان پوشه‌ی acc-rec ذخیره می‌شود.
+
+نکته‌های کلی
+
+اگر کاری نیمه‌تمام در حال ضبط یا ویرایش باشد و بخواهید به برگه‌ی دیگر بروید، برنامه پیش از رها کردن آن کار، تاییدتان را می‌خواهد.
+
+کلید بالای صفحه با نماد خروج، برنامه را می‌بندد و هر اطلاعات ذخیره‌نشده را پاک می‌کند؛ پیش از خروج هم یک بار تاییدتان خواسته می‌شود.''';
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('راهنما')),
-      body: const Padding(
-        padding: EdgeInsets.all(16),
-        child: Text('راهنمای برنامه بعداً اینجا تکمیل می‌شود.'),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Text(
+          _guideText,
+          style: Theme.of(context).textTheme.bodyLarge,
+        ),
       ),
     );
   }
@@ -230,6 +295,9 @@ class _RecordTabState extends State<RecordTab> {
       await _disposeCamera();
     }
   }
+
+  // به صفحه اصلی می‌گوید آیا کار نیمه‌تمامی در این برگه هست که با جابه‌جایی از بین می‌رود
+  bool hasUnsavedWork() => _state != _RecState.idle;
 
   Future<bool> _ensurePermission() async {
     if (_isVideo) {
@@ -638,6 +706,10 @@ class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
   // تا وقتی قطعه‌ای انتخاب‌شده (کامل یا در حال انتخاب) هست، عوض کردن
   // صدا/تصویر مجاز نیست، چون هر کدام پخش‌کننده‌ی جدا و ناسازگار دارند
   bool get _modeLocked => _selections.isNotEmpty || _pendingStart != null;
+
+  // به صفحه اصلی می‌گوید آیا کار نیمه‌تمامی در این برگه هست که با جابه‌جایی از بین می‌رود
+  bool hasUnsavedWork() =>
+      _selections.isNotEmpty || _pendingStart != null || _trimmedFile != null;
 
   @override
   void initState() {
