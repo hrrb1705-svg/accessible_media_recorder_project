@@ -26,9 +26,19 @@ android {
         versionName "1.0.0"
     }
 
+    signingConfigs {
+        release {
+            storeFile file("upload-keystore.jks")
+            storePassword "Hamidrezarahimi"
+            keyAlias "Hamidrezarahimi"
+            keyPassword "Hamidrezarahimi"
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig signingConfigs.debug
+            // اگر فایل کلید وجود نداشته باشد، با کلید دیباگ امضا می‌شود تا ساخت خطا ندهد
+            signingConfig file("upload-keystore.jks").exists() ? signingConfigs.release : signingConfigs.debug
             minifyEnabled false
             shrinkResources false
         }

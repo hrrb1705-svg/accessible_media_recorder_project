@@ -11,8 +11,9 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:record/record.dart';
 import 'package:video_player/video_player.dart';
-import 'package:ffmpeg_kit_flutter_new_min/ffmpeg_kit.dart';
-import 'package:ffmpeg_kit_flutter_new_min/return_code.dart';
+import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
+import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -35,7 +36,7 @@ class AccessibleMediaRecorderApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'ضبط رسانه دسترس‌پذیر',
+      title: 'فایل چند رسانه‌ای دسترس پذیر',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(colorSchemeSeed: Colors.teal, useMaterial3: true),
       locale: const Locale('fa', 'IR'),
@@ -64,12 +65,16 @@ class _HomePageState extends State<HomePage> {
   int _tab = 0;
   final GlobalKey<_RecordTabState> _recordKey = GlobalKey<_RecordTabState>();
   final GlobalKey<_EditTabState> _editKey = GlobalKey<_EditTabState>();
+  final GlobalKey<_ConvertTabState> _convertKey =
+      GlobalKey<_ConvertTabState>();
 
   // اگر در برگه‌ی فعلی کار نیمه‌تمامی وجود داشته باشد، قبل از جابه‌جایی تایید می‌گیرد
   Future<bool> _confirmLeaveCurrentTabIfNeeded() async {
     final hasWork = _tab == 0
         ? (_recordKey.currentState?.hasUnsavedWork() ?? false)
-        : (_editKey.currentState?.hasUnsavedWork() ?? false);
+        : _tab == 1
+            ? (_editKey.currentState?.hasUnsavedWork() ?? false)
+            : (_convertKey.currentState?.hasUnsavedWork() ?? false);
     if (!hasWork) return true;
     final sure = await showDialog<bool>(
       context: context,
@@ -127,7 +132,7 @@ class _HomePageState extends State<HomePage> {
           tooltip: 'خروج از برنامه و پاک کردن اطلاعات',
           onPressed: _confirmExit,
         ),
-        title: const Text('ضبط رسانه دسترس‌پذیر'),
+        title: const Text('فایل چند رسانه‌ای دسترس پذیر'),
         actions: [
           IconButton(
             icon: const Icon(Icons.help_outline),
@@ -138,7 +143,11 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
-      body: _tab == 0 ? RecordTab(key: _recordKey) : EditTab(key: _editKey),
+      body: _tab == 0
+          ? RecordTab(key: _recordKey)
+          : _tab == 1
+              ? EditTab(key: _editKey)
+              : ConvertTab(key: _convertKey),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _tab,
         onTap: (i) async {
@@ -149,6 +158,7 @@ class _HomePageState extends State<HomePage> {
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.mic), label: 'ضبط'),
           BottomNavigationBarItem(icon: Icon(Icons.content_cut), label: 'ویرایش'),
+          BottomNavigationBarItem(icon: Icon(Icons.swap_horiz), label: 'تبدیل'),
         ],
       ),
     );
@@ -161,7 +171,7 @@ class HelpPage extends StatelessWidget {
 
   static const String _guideText = '''ضبط و ویرایش فایل‌های دسترس‌پذیر توسط حمیدرضا رحیمی با کمک AI
 
-این برنامه دو برگه دارد: برگه ضبط و برگه ویرایش. با کلیدهای پایین صفحه بین این دو جابه‌جا می‌شوید.
+این برنامه سه برگه دارد: برگه ضبط، برگه ویرایش و برگه تبدیل. با کلیدهای پایین صفحه بین این دو جابه‌جا می‌شوید.
 
 برگه ضبط
 
@@ -180,6 +190,10 @@ class HelpPage extends StatelessWidget {
 برای بریدن بخشی از فایل، در لحظه‌ی شروع بخش موردنظر کلید علامت‌گذاری را بزنید و در لحظه‌ی پایان همان بخش دوباره همان کلید را بزنید تا قطعه کامل شود. می‌توانید چند قطعه از یک فایل انتخاب کنید؛ هنگام برش، همه‌ی قطعه‌ها پشت سر هم در یک فایل خروجی قرار می‌گیرند. تا وقتی قطعه‌ای انتخاب‌شده یا نیمه‌انتخاب دارید، تغییر بین صدا و تصویر ممکن نیست؛ ابتدا باید قطعه‌ها را برش بزنید و ذخیره کنید یا آن‌ها را کنار بگذارید.
 
 بعد از برش، کلید ذخیره فعال می‌شود و مانند برگه ضبط، پنجره‌ی نام فایل باز می‌شود و نتیجه در همان پوشه‌ی acc-rec ذخیره می‌شود.
+
+برگه تبدیل
+
+ابتدا یکی از سه حالت صدا، ویدیو یا ویدیو به صدا را انتخاب کنید. با کلید انتخاب فایل، فایل را از گوشی انتخاب کنید تا نام، نوع و اندازه‌ی آن نشان داده شود. سپس از فهرست تبدیل‌های مجاز یکی را انتخاب کنید؛ کنار هر مورد اندازه‌ی تقریبی فایل خروجی نوشته شده است. با کلید انجام شود، فایل تبدیل‌شده با همان نام فایل اصلی و پسوند جدید در پوشه‌ی acc-rec ساخته می‌شود. در هر حالت سه گزینه کاملاً کوچک، متعادل و کیفیت بالا هست؛ صدا به mp3 و ویدیو به mp4 با فشرده‌سازی بهتر تبدیل می‌شود. تبدیل ویدیو ممکن است چند دقیقه طول بکشد.
 
 نکته‌های کلی
 
@@ -1255,6 +1269,264 @@ class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
                   icon: const Icon(Icons.save),
                   label: const Text('ذخیره'),
                   onPressed: canSave ? _save : null,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+/// برگه تبدیل: صدا، ویدیو، ویدیو به صدا
+class ConvertTab extends StatefulWidget {
+  const ConvertTab({super.key});
+
+  @override
+  State<ConvertTab> createState() => _ConvertTabState();
+}
+
+class _ConvOption {
+  final String title;
+  final String ext;
+  final String args; // آرگومان‌های رمزگذاری ffmpeg
+  final double Function(double durSec, int srcBytes) estimate;
+  const _ConvOption(this.title, this.ext, this.args, this.estimate);
+}
+
+class _ConvertTabState extends State<ConvertTab> {
+  int _mode = 0; // 0 صدا، 1 ویدیو، 2 ویدیو به صدا
+  String? _path;
+  String? _name;
+  int _size = 0;
+  double _dur = 0;
+  int? _selected;
+  bool _busy = false;
+
+  static final List<_ConvOption> _audioOpts = [
+    _ConvOption('کاملاً کوچک (mp3، تک‌کاناله)', 'mp3',
+        '-vn -c:a libmp3lame -b:a 48k -ac 1', (d, s) => d * 6000),
+    _ConvOption('متعادل (mp3)', 'mp3', '-vn -c:a libmp3lame -b:a 96k',
+        (d, s) => d * 12000),
+    _ConvOption('کیفیت بالا (mp3)', 'mp3', '-vn -c:a libmp3lame -b:a 192k',
+        (d, s) => d * 24000),
+  ];
+
+  static final List<_ConvOption> _videoOpts = [
+    _ConvOption(
+        'کاملاً کوچک (mp4، وضوح کمتر)',
+        'mp4',
+        '-c:v libx264 -preset veryfast -crf 32 -vf scale=-2:480 -c:a aac -b:a 64k -ac 1 -movflags +faststart',
+        (d, s) => s * 0.12),
+    _ConvOption(
+        'متعادل (mp4)',
+        'mp4',
+        '-c:v libx264 -preset veryfast -crf 26 -c:a aac -b:a 96k -movflags +faststart',
+        (d, s) => s * 0.3),
+    _ConvOption(
+        'کیفیت بالا (mp4)',
+        'mp4',
+        '-c:v libx264 -preset veryfast -crf 21 -c:a aac -b:a 160k -movflags +faststart',
+        (d, s) => s * 0.55),
+  ];
+
+  List<_ConvOption> get _opts => _mode == 1 ? _videoOpts : _audioOpts;
+
+  bool hasUnsavedWork() => _busy;
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  void _setMode(int m) {
+    if (_busy || m == _mode) return;
+    setState(() {
+      _mode = m;
+      _path = null;
+      _name = null;
+      _size = 0;
+      _dur = 0;
+      _selected = null;
+    });
+  }
+
+  String _fmtSize(num bytes) {
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} مگابایت';
+    }
+    if (bytes >= 1024) return '${(bytes / 1024).toStringAsFixed(0)} کیلوبایت';
+    return '${bytes.toInt()} بایت';
+  }
+
+  Future<void> _pick() async {
+    final res = await FilePicker.platform.pickFiles(
+      type: _mode == 0 ? FileType.audio : FileType.video,
+      initialDirectory: '/storage/emulated/0/acc-rec',
+    );
+    if (res == null || res.files.single.path == null) return;
+    final path = res.files.single.path!;
+    double dur = 0;
+    try {
+      final session = await FFprobeKit.getMediaInformation(path);
+      final info = session.getMediaInformation();
+      dur = double.tryParse(info?.getDuration() ?? '') ?? 0;
+    } catch (_) {}
+    final size = await File(path).length();
+    if (!mounted) return;
+    setState(() {
+      _path = path;
+      _name = res.files.single.name;
+      _size = size;
+      _dur = dur;
+      _selected = null;
+    });
+  }
+
+  String _baseName() {
+    final n = _name ?? 'converted';
+    final i = n.lastIndexOf('.');
+    return i > 0 ? n.substring(0, i) : n;
+  }
+
+  String _typeName() {
+    final n = _name ?? '';
+    final i = n.lastIndexOf('.');
+    return i >= 0 ? n.substring(i + 1).toUpperCase() : 'نامشخص';
+  }
+
+  Future<void> _convert() async {
+    if (_path == null || _selected == null || _busy) return;
+    final opt = _opts[_selected!];
+    final granted = await Permission.manageExternalStorage.request();
+    if (!granted.isGranted) {
+      _snack('دسترسی به حافظه داده نشد');
+      return;
+    }
+    setState(() => _busy = true);
+    try {
+      final folder = Directory('/storage/emulated/0/acc-rec');
+      if (!await folder.exists()) await folder.create(recursive: true);
+      var destPath = '${folder.path}/${_baseName()}.${opt.ext}';
+      var n = 2;
+      while (await File(destPath).exists() || destPath == _path) {
+        destPath = '${folder.path}/${_baseName()}_$n.${opt.ext}';
+        n++;
+      }
+      final tempDir = await getTemporaryDirectory();
+      final tmp =
+          '${tempDir.path}/conv_${DateTime.now().millisecondsSinceEpoch}.${opt.ext}';
+      final session =
+          await FFmpegKit.execute('-y -i "$_path" ${opt.args} "$tmp"');
+      if (!ReturnCode.isSuccess(await session.getReturnCode())) {
+        throw Exception('convert failed');
+      }
+      await File(tmp).copy(destPath);
+      try {
+        await File(tmp).delete();
+      } catch (_) {}
+      if (!mounted) return;
+      setState(() => _busy = false);
+      _snack('تبدیل انجام شد و در پوشه acc-rec ذخیره شد: '
+          '${destPath.split('/').last}');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      _snack('تبدیل انجام نشد. فایل یا نوع تبدیل مناسب نیست');
+    }
+  }
+
+  Widget _radio(int value, String label) {
+    return MergeSemantics(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Radio<int>(
+            value: value,
+            groupValue: _mode,
+            onChanged: _busy ? null : (v) => _setMode(v ?? 0),
+          ),
+          Text(label),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 12,
+            children: [
+              _radio(0, 'صدا'),
+              _radio(1, 'ویدیو'),
+              _radio(2, 'ویدیو به صدا'),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: _path == null
+                ? const Center(child: Text('فایلی انتخاب نشده است'))
+                : ListView(
+                    children: [
+                      Semantics(
+                        container: true,
+                        child: Text('نام فایل: $_name'),
+                      ),
+                      Semantics(
+                        container: true,
+                        child: Text('نوع فایل: ${_typeName()}'),
+                      ),
+                      Semantics(
+                        container: true,
+                        child: Text('اندازه فایل: ${_fmtSize(_size)}'),
+                      ),
+                      const SizedBox(height: 8),
+                      Semantics(
+                        header: true,
+                        child: const Text('تبدیل‌های مجاز'),
+                      ),
+                      for (var i = 0; i < _opts.length; i++)
+                        RadioListTile<int>(
+                          value: i,
+                          groupValue: _selected,
+                          onChanged:
+                              _busy ? null : (v) => setState(() => _selected = v),
+                          title: Text(_opts[i].title),
+                          subtitle: Text(_dur > 0 || _mode == 1
+                              ? 'اندازه تقریبی خروجی: ${_fmtSize(_opts[i].estimate(_dur, _size))}'
+                              : 'اندازه خروجی نامشخص'),
+                        ),
+                    ],
+                  ),
+          ),
+          if (_busy)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 4),
+              child: Text('در حال تبدیل…'),
+            ),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _busy ? null : _pick,
+                  child: const Text('انتخاب فایل'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: FilledButton(
+                  onPressed:
+                      (_path != null && _selected != null && !_busy)
+                          ? _convert
+                          : null,
+                  child: const Text('انجام شود'),
                 ),
               ),
             ],
