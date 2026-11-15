@@ -129,7 +129,7 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.exit_to_app),
-          tooltip: 'خروج از برنامه و پاک کردن اطلاعات',
+          tooltip: 'خروج',
           onPressed: _confirmExit,
         ),
         title: const Text('فایل چند رسانه‌ای دسترس پذیر'),
@@ -169,11 +169,11 @@ class _HomePageState extends State<HomePage> {
 class HelpPage extends StatelessWidget {
   const HelpPage({super.key});
 
-  static const String _guideText = '''ضبط و ویرایش فایل‌های دسترس‌پذیر توسط حمیدرضا رحیمی با کمک AI
+  static const String _guideText = '''بخش ۱: معرفی
 
 این برنامه سه برگه دارد: برگه ضبط، برگه ویرایش و برگه تبدیل. با کلیدهای پایین صفحه بین این دو جابه‌جا می‌شوید.
 
-برگه ضبط
+بخش ۲: برگه ضبط
 
 ابتدا با دکمه‌های رادیویی صدا یا تصویر را انتخاب کنید؛ این انتخاب فقط وقتی چیزی در حال ضبط نیست قابل تغییر است. با زدن کلید شروع ضبط، سه ثانیه شمارش معکوس انجام می‌شود و سپس ضبط آغاز می‌شود. همان کلید در حین ضبط به توقف موقت تبدیل می‌شود و با زدن دوباره‌اش ضبط ادامه می‌یابد. کلید جداگانه‌ای برای پایان کامل ضبط هست؛ بعد از پایان، کلید ذخیره فعال می‌شود و با زدنش پنجره‌ای برای وارد کردن نام فایل باز می‌شود. فایل نهایی در پوشه‌ی acc-rec در حافظه‌ی گوشی ذخیره می‌شود.
 
@@ -181,9 +181,9 @@ class HelpPage extends StatelessWidget {
 
 ضبط با یک سرویس پیش‌زمینه انجام می‌شود، یعنی حتی با خاموش کردن صفحه یا خروج موقت از برنامه متوقف نمی‌شود. یک ترفند مفید برای ضبط صدا این است که بعد از شروع ضبط، صفحه را خاموش کنید تا صدای صفحه‌خوان ناخواسته در فایل ضبط نشود؛ با روشن شدن دوباره‌ی صفحه، برنامه ضبط را خودش موقتاً متوقف می‌کند تا پیش از ادامه، فرصت بررسی وضعیت داشته باشید. برای ضبط تصویر این ترفند مناسب نیست، چون تا زمانی که صفحه دوباره روشن شود، ضبط تصویر همچنان ادامه دارد؛ در این حالت بهتر است از همان کلید توقف موقت که به‌طور خودکار کانون صفحه‌خوان روی آن است استفاده کنید، بدون نیاز به جست‌وجوی صفحه.
 
-برگه ویرایش
+بخش ۳: برگه ویرایش
 
-ابتدا نوع فایل، صدا یا تصویر، را انتخاب کنید و با کلید باز کردن فایل، فایل مورد نظر را از حافظه‌ی گوشی انتخاب کنید. برای فایل تصویری، پیش‌نمایش آن در وسط صفحه نشان داده می‌شود.
+ابتدا نوع فایل، صدا یا تصویر، را انتخاب کنید و با کلید باز کردن فایل، فایل مورد نظر را از حافظه‌ی گوشی انتخاب کنید. برای فایل تصویری، پیش‌نمایش آن در وسط صفحه نشان داده می‌شود. با کلید انصراف در ردیف پایین، همه‌ی انتخاب‌های قبلی پاک می‌شود و صفحه مانند قبل از انتخاب فایل برمی‌گردد.
 
 با کلید میانی پخش را شروع یا متوقف کنید. کلیدهای کنار آن، پخش را به اندازه‌ی مقدار نوشته‌شده در جعبه‌ی گام، به جلو یا عقب می‌برند، و دو کلید در دو انتها برای پرش مستقیم به ابتدا یا انتهای فایل هستند.
 
@@ -191,11 +191,11 @@ class HelpPage extends StatelessWidget {
 
 بعد از برش، کلید ذخیره فعال می‌شود و مانند برگه ضبط، پنجره‌ی نام فایل باز می‌شود و نتیجه در همان پوشه‌ی acc-rec ذخیره می‌شود.
 
-برگه تبدیل
+بخش ۴: برگه تبدیل
 
-ابتدا یکی از سه حالت صدا، ویدیو یا ویدیو به صدا را انتخاب کنید. با کلید انتخاب فایل، فایل را از گوشی انتخاب کنید تا نام، نوع و اندازه‌ی آن نشان داده شود. سپس از فهرست تبدیل‌های مجاز یکی را انتخاب کنید؛ کنار هر مورد اندازه‌ی تقریبی فایل خروجی نوشته شده است. با کلید انجام شود، فایل تبدیل‌شده با همان نام فایل اصلی و پسوند جدید در پوشه‌ی acc-rec ساخته می‌شود. در هر حالت سه گزینه کاملاً کوچک، متعادل و کیفیت بالا هست؛ صدا به mp3 و ویدیو به mp4 با فشرده‌سازی بهتر تبدیل می‌شود. تبدیل ویدیو ممکن است چند دقیقه طول بکشد.
+ابتدا یکی از سه حالت صدا، ویدیو یا ویدیو به صدا را انتخاب کنید. با کلید انتخاب فایل، فایل را از گوشی انتخاب کنید تا نام، نوع و اندازه‌ی آن نشان داده شود. سپس از فهرست تبدیل‌های مجاز یکی را انتخاب کنید؛ کنار هر مورد اندازه‌ی تقریبی فایل خروجی نوشته شده است. با کلید انجام شود، فایل تبدیل‌شده با همان نام فایل اصلی و پسوند جدید در پوشه‌ی acc-rec ساخته می‌شود. در هر حالت سه گزینه کمترین سایز، متعادل و کیفیت بالا هست؛ صدا به mp3 و ویدیو به mp4 با فشرده‌سازی بهتر تبدیل می‌شود. تبدیل ویدیو ممکن است چند دقیقه طول بکشد.
 
-نکته‌های کلی
+بخش ۵: نکته‌های کلی
 
 اگر کاری نیمه‌تمام در حال ضبط یا ویرایش باشد و بخواهید به برگه‌ی دیگر بروید، برنامه پیش از رها کردن آن کار، تاییدتان را می‌خواهد.
 
@@ -848,6 +848,24 @@ class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
     });
   }
 
+  // انصراف: همه‌ی انتخاب‌ها و فایل باز را پاک می‌کند و صفحه مانند قبل از انتخاب فایل می‌شود
+  Future<void> _cancelEdit() async {
+    if (_isBusy) return;
+    await _player.stop();
+    await _videoController?.pause();
+    final old = _videoController;
+    setState(() {
+      _videoController = null;
+      _file = null;
+      _pendingStart = null;
+      _trimmedFile = null;
+      _selections.clear();
+      _pos = Duration.zero;
+      _len = Duration.zero;
+    });
+    await old?.dispose();
+  }
+
   Future<void> _open() async {
     final res = await FilePicker.platform.pickFiles(
       type: _isVideo ? FileType.video : FileType.audio,
@@ -1232,8 +1250,10 @@ class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
             ),
           ),
           const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
             children: [
               Semantics(
                 label: 'انتخاب فایل برای ویرایش',
@@ -1271,6 +1291,15 @@ class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
                   onPressed: canSave ? _save : null,
                 ),
               ),
+              Semantics(
+                label: 'انصراف و پاک کردن انتخاب‌ها',
+                button: true,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.close),
+                  label: const Text('انصراف'),
+                  onPressed: _file == null ? null : _cancelEdit,
+                ),
+              ),
             ],
           ),
         ],
@@ -1306,7 +1335,7 @@ class _ConvertTabState extends State<ConvertTab> {
   bool _busy = false;
 
   static final List<_ConvOption> _audioOpts = [
-    _ConvOption('کاملاً کوچک (mp3، تک‌کاناله)', 'mp3',
+    _ConvOption('کمترین سایز (mp3، تک‌کاناله)', 'mp3',
         '-vn -c:a libmp3lame -b:a 48k -ac 1', (d, s) => d * 6000),
     _ConvOption('متعادل (mp3)', 'mp3', '-vn -c:a libmp3lame -b:a 96k',
         (d, s) => d * 12000),
@@ -1316,7 +1345,7 @@ class _ConvertTabState extends State<ConvertTab> {
 
   static final List<_ConvOption> _videoOpts = [
     _ConvOption(
-        'کاملاً کوچک (mp4، وضوح کمتر)',
+        'کمترین سایز (mp4، وضوح کمتر)',
         'mp4',
         '-c:v libx264 -preset veryfast -crf 32 -vf scale=-2:480 -c:a aac -b:a 64k -ac 1 -movflags +faststart',
         (d, s) => s * 0.12),
