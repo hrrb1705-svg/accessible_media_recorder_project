@@ -15,6 +15,9 @@ import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 
+import 'ai_service.dart';
+import 'settings_page.dart';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   // برای این‌که پخش صدا با خاموش شدن صفحه قطع نشود
@@ -134,6 +137,13 @@ class _HomePageState extends State<HomePage> {
         ),
         title: const Text('فایل چند رسانه‌ای دسترس پذیر'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            tooltip: 'تنظیمات',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const SettingsPage()),
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.help_outline),
             tooltip: 'راهنما',
@@ -1322,7 +1332,9 @@ class _ConvOption {
   final String ext;
   final String args; // آرگومان‌های رمزگذاری ffmpeg
   final double Function(double durSec, int srcBytes) estimate;
-  const _ConvOption(this.title, this.ext, this.args, this.estimate);
+  final bool translate; // ترجمه به انگلیسی با هوش مصنوعی
+  const _ConvOption(this.title, this.ext, this.args, this.estimate,
+      {this.translate = false});
 }
 
 class _ConvertTabState extends State<ConvertTab> {
@@ -1341,6 +1353,9 @@ class _ConvertTabState extends State<ConvertTab> {
         (d, s) => d * 12000),
     _ConvOption('کیفیت بالا (mp3)', 'mp3', '-vn -c:a libmp3lame -b:a 192k',
         (d, s) => d * 24000),
+    _ConvOption('ترجمه به انگلیسی با هوش مصنوعی (mp3)', 'mp3',
+        '-vn -c:a libmp3lame -b:a 96k', (d, s) => d * 12000,
+        translate: true),
   ];
 
   static final List<_ConvOption> _videoOpts = [
@@ -1429,6 +1444,10 @@ class _ConvertTabState extends State<ConvertTab> {
   Future<void> _convert() async {
     if (_path == null || _selected == null || _busy) return;
     final opt = _opts[_selected!];
+    if (opt.translate) {
+      await _translateAudio();
+      return;
+    }
     final granted = await Permission.manageExternalStorage.request();
     if (!granted.isGranted) {
       _snack('دسترسی به حافظه داده نشد');
@@ -1465,6 +1484,83 @@ class _ConvertTabState extends State<ConvertTab> {
       setState(() => _busy = false);
       _snack('تبدیل انجام نشد. فایل یا نوع تبدیل مناسب نیست');
     }
+  }
+
+  Future<void> _translateAudio() async {
+    final settings = await AiSettings.load();
+    if (settings.apiKey.isEmpty) {
+      _snack('ابتدا در تنظیمات کلید API را وارد کنید');
+      return;
+    }
+    final granted = await Permission.manageExternalStorage.request();
+    if (!granted.isGranted) {
+      _snack('دسترسی به حافظه داده نشد');
+      return;
+    }
+    setState(() => _busy = true);
+    File? small;
+    try {
+      _snack('ترجمه شروع شد. ممکن است چند دقیقه طول بکشد');
+      final tempDir = await getTemporaryDirectory();
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      // کوچک‌سازی صدا به mp3 تک‌کاناله برای ارسال سریع‌تر
+      final tmpMp3 = '${tempDir.path}/tr_$ts.mp3';
+      final ff = await FFmpegKit.execute(
+          '-y -i "$_path" -vn -ac 1 -c:a libmp3lame -b:a 48k "$tmpMp3"');
+      if (!ReturnCode.isSuccess(await ff.getReturnCode())) {
+        throw Exception('ffmpeg');
+      }
+      small = File(tmpMp3);
+      final ai = AiService(settings);
+      final fa = await ai.transcribe(small);
+      if (fa.trim().isEmpty) {
+        throw Exception('empty');
+      }
+      // متن طولانی به تکه‌های حدود ۳۵۰۰ نویسه تقسیم می‌شود
+      final parts = _chunk(fa, 3500);
+      final buf = StringBuffer();
+      for (final p in parts) {
+        buf.write(await ai.translateToEnglish(p));
+        buf.write(' ');
+      }
+      final en = buf.toString().trim();
+      final folder = Directory('/storage/emulated/0/acc-rec');
+      if (!await folder.exists()) await folder.create(recursive: true);
+      var destPath = '${folder.path}/${_baseName()}_en.mp3';
+      var n = 2;
+      while (await File(destPath).exists()) {
+        destPath = '${folder.path}/${_baseName()}_en_$n.mp3';
+        n++;
+      }
+      final speechTmp = '${tempDir.path}/tts_$ts.mp3';
+      await ai.speak(en, File(speechTmp));
+      await File(speechTmp).copy(destPath);
+      try {
+        await File(speechTmp).delete();
+        await small.delete();
+      } catch (_) {}
+      if (!mounted) return;
+      setState(() => _busy = false);
+      _snack('ترجمه انجام شد و در پوشه acc-rec ذخیره شد: '
+          '${destPath.split('/').last}');
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      _snack('ترجمه انجام نشد. کلید، اینترنت یا آدرس سرویس را بررسی کنید');
+    }
+  }
+
+  List<String> _chunk(String text, int size) {
+    final out = <String>[];
+    var rest = text;
+    while (rest.length > size) {
+      var cut = rest.lastIndexOf(' ', size);
+      if (cut <= 0) cut = size;
+      out.add(rest.substring(0, cut));
+      rest = rest.substring(cut).trimLeft();
+    }
+    if (rest.isNotEmpty) out.add(rest);
+    return out;
   }
 
   Widget _radio(int value, String label) {
