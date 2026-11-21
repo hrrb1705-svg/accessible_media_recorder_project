@@ -4,25 +4,102 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// تنظیمات هوش مصنوعی: آدرس سرویس و کلید API
+/// تنظیمات هوش مصنوعی: آدرس اندپوینت، کلید API و نام مدل‌ها
 class AiSettings {
   final String baseUrl;
   final String apiKey;
-  const AiSettings(this.baseUrl, this.apiKey);
+  final String chatModel;
+  final String sttModel;
+  final String ttsModel;
+  const AiSettings(this.baseUrl, this.apiKey,
+      [this.chatModel = defaultChatModel,
+      this.sttModel = defaultSttModel,
+      this.ttsModel = defaultTtsModel]);
 
   static const String defaultBaseUrl = 'https://api.gapgpt.app/v1';
+  static const String defaultChatModel = 'gpt-4o-mini';
+  static const String defaultSttModel = 'whisper-1';
+  static const String defaultTtsModel = 'tts-1';
+
+  /// اگر کاربر آدرس کامل یک مسیر را بگذارد، بخش آخر حذف می‌شود
+  static String normalize(String u) {
+    var x = u.trim();
+    for (final suffix in [
+      '/chat/completions',
+      '/audio/transcriptions',
+      '/audio/speech',
+      '/models',
+    ]) {
+      if (x.endsWith(suffix)) {
+        x = x.substring(0, x.length - suffix.length);
+      }
+    }
+    while (x.endsWith('/')) {
+      x = x.substring(0, x.length - 1);
+    }
+    return x;
+  }
 
   static Future<AiSettings> load() async {
     final p = await SharedPreferences.getInstance();
-    final base = p.getString('ai_base_url')?.trim() ?? '';
-    final key = p.getString('ai_api_key')?.trim() ?? '';
-    return AiSettings(base.isEmpty ? defaultBaseUrl : base, key);
+    String g(String k, String d) {
+      final v = p.getString(k)?.trim() ?? '';
+      return v.isEmpty ? d : v;
+    }
+
+    return AiSettings(
+      normalize(g('ai_base_url', defaultBaseUrl)),
+      p.getString('ai_api_key')?.trim() ?? '',
+      g('ai_chat_model', defaultChatModel),
+      g('ai_stt_model', defaultSttModel),
+      g('ai_tts_model', defaultTtsModel),
+    );
   }
 
-  static Future<void> save(String baseUrl, String apiKey) async {
+  static Future<void> save(String baseUrl, String apiKey,
+      {String chat = '', String stt = '', String tts = ''}) async {
     final p = await SharedPreferences.getInstance();
-    await p.setString('ai_base_url', baseUrl.trim());
+    await p.setString('ai_base_url', normalize(baseUrl));
     await p.setString('ai_api_key', apiKey.trim());
+    await p.setString('ai_chat_model', chat.trim());
+    await p.setString('ai_stt_model', stt.trim());
+    await p.setString('ai_tts_model', tts.trim());
+  }
+}
+
+/// ثبت حداکثر ده خطای اخیر (جدیدترین اول)
+class ErrorLog {
+  static const _k = 'error_log';
+
+  static Future<List<String>> all() async {
+    final p = await SharedPreferences.getInstance();
+    return p.getStringList(_k) ?? <String>[];
+  }
+
+  static Future<void> add(String where, Object e) async {
+    final p = await SharedPreferences.getInstance();
+    final list = p.getStringList(_k) ?? <String>[];
+    final t = DateTime.now();
+    String two(int n) => n.toString().padLeft(2, '0');
+    final stamp =
+        '${t.year}/${two(t.month)}/${two(t.day)} ${two(t.hour)}:${two(t.minute)}:${two(t.second)}';
+    list.insert(0, '$stamp | $where | $e');
+    while (list.length > 10) {
+      list.removeLast();
+    }
+    await p.setStringList(_k, list);
+  }
+
+  static Future<void> removeAt(int i) async {
+    final p = await SharedPreferences.getInstance();
+    final list = p.getStringList(_k) ?? <String>[];
+    if (i >= 0 && i < list.length) list.removeAt(i);
+    await p.setStringList(_k, list);
+  }
+
+  static Future<void> clear() async {
+    final p = await SharedPreferences.getInstance();
+    await p.remove(_k);
   }
 }
 
@@ -43,7 +120,10 @@ class AiService {
 
   void _check(http.Response r) {
     if (r.statusCode < 200 || r.statusCode >= 300) {
-      throw AiException('خطای سرویس، کد ${r.statusCode}');
+      var body = utf8.decode(r.bodyBytes, allowMalformed: true);
+      if (body.length > 400) body = body.substring(0, 400);
+      throw AiException(
+          'خطای سرویس، کد ${r.statusCode}، آدرس ${r.request?.url}، پاسخ: $body');
     }
   }
 
@@ -60,7 +140,7 @@ class AiService {
     final req = http.MultipartRequest(
         'POST', Uri.parse('${s.baseUrl}/audio/transcriptions'))
       ..headers.addAll(_auth)
-      ..fields['model'] = 'whisper-1'
+      ..fields['model'] = s.sttModel
       ..files.add(await http.MultipartFile.fromPath('file', audio.path));
     final streamed = await req.send().timeout(const Duration(minutes: 10));
     final r = await http.Response.fromStream(streamed);
@@ -76,7 +156,7 @@ class AiService {
           Uri.parse('${s.baseUrl}/chat/completions'),
           headers: {..._auth, 'Content-Type': 'application/json'},
           body: jsonEncode({
-            'model': 'gpt-4o-mini',
+            'model': s.chatModel,
             'messages': [
               {
                 'role': 'system',
@@ -102,7 +182,7 @@ class AiService {
           Uri.parse('${s.baseUrl}/audio/speech'),
           headers: {..._auth, 'Content-Type': 'application/json'},
           body: jsonEncode({
-            'model': 'tts-1',
+            'model': s.ttsModel,
             'voice': 'alloy',
             'input': text,
             'response_format': 'mp3',

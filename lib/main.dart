@@ -17,6 +17,7 @@ import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 
 import 'ai_service.dart';
 import 'settings_page.dart';
+import 'error_log_page.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -130,26 +131,31 @@ class _HomePageState extends State<HomePage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.exit_to_app),
-          tooltip: 'خروج',
-          onPressed: _confirmExit,
-        ),
         title: const Text('فایل چند رسانه‌ای دسترس پذیر'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.settings),
-            tooltip: 'تنظیمات',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const SettingsPage()),
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.help_outline),
-            tooltip: 'راهنما',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const HelpPage()),
-            ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.menu),
+            tooltip: 'منو',
+            onSelected: (v) {
+              if (v == 'settings') {
+                Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const SettingsPage()));
+              } else if (v == 'errors') {
+                Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const ErrorLogPage()));
+              } else if (v == 'help') {
+                Navigator.of(context)
+                    .push(MaterialPageRoute(builder: (_) => const HelpPage()));
+              } else if (v == 'exit') {
+                _confirmExit();
+              }
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'settings', child: Text('تنظیمات')),
+              PopupMenuItem(value: 'errors', child: Text('خطاهای اخیر')),
+              PopupMenuItem(value: 'help', child: Text('راهنما')),
+              PopupMenuItem(value: 'exit', child: Text('خروج')),
+            ],
           ),
         ],
       ),
@@ -460,6 +466,38 @@ class _RecordTabState extends State<RecordTab> {
     _snack('ضبط پایان یافت. حالا می‌توانید ذخیره کنید');
   }
 
+  Future<void> _cancelRecording() async {
+    _countdownTimer?.cancel();
+    _stopElapsedTimer();
+    String? path = _tempFile;
+    try {
+      if (_state == _RecState.recording || _state == _RecState.paused) {
+        if (_isVideo) {
+          final f = await _cameraController?.stopVideoRecording();
+          path = f?.path ?? path;
+        } else {
+          path = await _recorder.stop() ?? path;
+        }
+        await _serviceChannel.invokeMethod('stop');
+      }
+    } catch (_) {}
+    try {
+      if (path != null) {
+        final f = File(path);
+        if (await f.exists()) await f.delete();
+      }
+    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _state = _RecState.idle;
+      _tempFile = null;
+      _elapsedSeconds = 0;
+      _countdown = 3;
+    });
+    _focusMainButtonNextFrame();
+    _snack('ضبط لغو شد');
+  }
+
   Future<void> _save() async {
     if (_tempFile == null) return;
     final ext = _tempFile!.split('.').last;
@@ -678,6 +716,16 @@ class _RecordTabState extends State<RecordTab> {
                   icon: const Icon(Icons.stop_circle),
                   label: const Text('پایان ضبط'),
                   onPressed: canFinish ? _finish : null,
+                ),
+              ),
+              Semantics(
+                label: 'لغو ضبط و بازگشت به حالت اول',
+                button: true,
+                child: IconButton.outlined(
+                  icon: const Icon(Icons.cancel),
+                  tooltip: 'لغو ضبط',
+                  onPressed:
+                      _state == _RecState.idle ? null : _cancelRecording,
                 ),
               ),
               Semantics(
@@ -1482,6 +1530,7 @@ class _ConvertTabState extends State<ConvertTab> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _busy = false);
+      ErrorLog.add('تبدیل', e);
       _snack('تبدیل انجام نشد. فایل یا نوع تبدیل مناسب نیست');
     }
   }
@@ -1546,7 +1595,8 @@ class _ConvertTabState extends State<ConvertTab> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _busy = false);
-      _snack('ترجمه انجام نشد. کلید، اینترنت یا آدرس سرویس را بررسی کنید');
+      ErrorLog.add('ترجمه', e);
+      _snack('ترجمه انجام نشد. از منو، خطاهای اخیر را ببینید. کلید، اینترنت یا آدرس سرویس را بررسی کنید');
     }
   }
 
