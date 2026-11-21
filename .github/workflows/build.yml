@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -22,11 +25,20 @@ jobs:
       - run: flutter analyze
         continue-on-error: true
       - run: flutter build apk --release
-      - name: Rename APK to a readable Persian name
+      - name: Prepare APK file
         run: |
-          mkdir -p build/app/outputs/flutter-apk/release-named
-          cp "build/app/outputs/flutter-apk/app-release.apk" "build/app/outputs/flutter-apk/release-named/ضبط و ویرایش دسترس‌پذیر.apk"
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk dist/accessible-media-recorder.apk
       - uses: actions/upload-artifact@v4
         with:
           name: accessible-recorder
-          path: build/app/outputs/flutter-apk/release-named/
+          path: dist/accessible-media-recorder.apk
+      - name: Publish latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete latest-apk --cleanup-tag -y || true
+          gh release create latest-apk dist/accessible-media-recorder.apk \
+            --title "آخرین نسخه برنامه (ساخت ${{ github.run_number }})" \
+            --notes "این نسخه به‌صورت خودکار از آخرین تغییر شاخه main ساخته شده است. فایل accessible-media-recorder.apk را دانلود و نصب کنید." \
+            --latest
