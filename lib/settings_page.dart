@@ -121,7 +121,7 @@ class _SettingsPageState extends State<SettingsPage> {
           TextField(
             controller: _keyCtrl,
             obscureText: true,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               labelText: 'کلید API',
               helperText: _savedKey.isEmpty
                   ? 'کلیدی ذخیره نشده است'
