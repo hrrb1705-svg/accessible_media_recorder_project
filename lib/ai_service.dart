@@ -56,6 +56,25 @@ class AiSettings {
     );
   }
 
+  /// فهرست سه مدل و شماره‌ی انتخاب‌شده برای هر نقش
+  static Future<(List<String>, int)> loadList(String role, String def) async {
+    final p = await SharedPreferences.getInstance();
+    var l = p.getStringList('ai_${role}_list') ?? [];
+    if (l.length != 3) {
+      final cur = p.getString('ai_${role}_model')?.trim() ?? '';
+      l = [cur.isEmpty ? def : cur, '', ''];
+    }
+    var i = p.getInt('ai_${role}_sel') ?? 0;
+    if (i < 0 || i > 2) i = 0;
+    return (l, i);
+  }
+
+  static Future<void> saveList(String role, List<String> l, int sel) async {
+    final p = await SharedPreferences.getInstance();
+    await p.setStringList('ai_${role}_list', l.map((e) => e.trim()).toList());
+    await p.setInt('ai_${role}_sel', sel);
+  }
+
   static Future<void> save(String baseUrl, String apiKey,
       {String chat = '', String stt = '', String tts = ''}) async {
     final p = await SharedPreferences.getInstance();
@@ -133,6 +152,44 @@ class AiService {
         .get(Uri.parse('${s.baseUrl}/models'), headers: _auth)
         .timeout(const Duration(seconds: 30));
     _check(r);
+  }
+
+  /// آزمایش مدل انتخاب‌شده برای یک نقش: chat، stt یا tts
+  Future<void> testModel(String role) async {
+    if (role == 'chat') {
+      final r = await http
+          .post(Uri.parse('${s.baseUrl}/chat/completions'),
+              headers: {..._auth, 'Content-Type': 'application/json'},
+              body: jsonEncode({
+                'model': s.chatModel,
+                'max_tokens': 5,
+                'messages': [
+                  {'role': 'user', 'content': 'hi'}
+                ],
+              }))
+          .timeout(const Duration(seconds: 40));
+      _check(r);
+    } else if (role == 'tts') {
+      final r = await http
+          .post(Uri.parse('${s.baseUrl}/audio/speech'),
+              headers: {..._auth, 'Content-Type': 'application/json'},
+              body: jsonEncode({
+                'model': s.ttsModel,
+                'voice': 'alloy',
+                'input': 'hi',
+                'response_format': 'mp3',
+              }))
+          .timeout(const Duration(seconds: 40));
+      _check(r);
+    } else {
+      final r = await http
+          .get(Uri.parse('${s.baseUrl}/models'), headers: _auth)
+          .timeout(const Duration(seconds: 30));
+      _check(r);
+      if (!r.body.contains('"${s.sttModel}"')) {
+        throw AiException('مدل ${s.sttModel} در فهرست مدل‌های سرویس نیست');
+      }
+    }
   }
 
   /// تبدیل صدا به متن

@@ -29,6 +29,7 @@ android {
     signingConfigs {
         release {
             storeFile file("upload-keystore.jks")
+            storeType "pkcs12"
             storePassword "Hamidrezarahimi"
             keyAlias "Hamidrezarahimi"
             keyPassword "Hamidrezarahimi"

@@ -10,12 +10,20 @@ class SettingsPage extends StatefulWidget {
   State<SettingsPage> createState() => _SettingsPageState();
 }
 
+const _roles = [
+  ('chat', 'ترجمه', AiSettings.defaultChatModel),
+  ('stt', 'تبدیل گفتار به متن', AiSettings.defaultSttModel),
+  ('tts', 'ساخت صدا', AiSettings.defaultTtsModel),
+];
+
 class _SettingsPageState extends State<SettingsPage> {
   final TextEditingController _urlCtrl = TextEditingController();
   final TextEditingController _keyCtrl = TextEditingController();
-  final TextEditingController _chatCtrl = TextEditingController();
-  final TextEditingController _sttCtrl = TextEditingController();
-  final TextEditingController _ttsCtrl = TextEditingController();
+  final Map<String, List<TextEditingController>> _c = {
+    for (final r in _roles)
+      r.$1: List.generate(3, (_) => TextEditingController())
+  };
+  final Map<String, int> _sel = {for (final r in _roles) r.$1: 0};
   String _savedKey = '';
   String _status = '';
   bool _testing = false;
@@ -32,27 +40,43 @@ class _SettingsPageState extends State<SettingsPage> {
     setState(() {
       _urlCtrl.text = s.baseUrl;
       _savedKey = s.apiKey;
-      _chatCtrl.text = s.chatModel;
-      _sttCtrl.text = s.sttModel;
-      _ttsCtrl.text = s.ttsModel;
     });
+    for (final r in _roles) {
+      final (l, i) = await AiSettings.loadList(r.$1, r.$3);
+      for (var k = 0; k < 3; k++) {
+        _c[r.$1]![k].text = l[k];
+      }
+      _sel[r.$1] = i;
+    }
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
     _urlCtrl.dispose();
     _keyCtrl.dispose();
-    _chatCtrl.dispose();
-    _sttCtrl.dispose();
-    _ttsCtrl.dispose();
+    for (final l in _c.values) {
+      for (final x in l) {
+        x.dispose();
+      }
+    }
     super.dispose();
   }
 
   Future<void> _store() async {
     // اگر فیلد کلید خالی بماند، کلید ذخیره‌شده‌ی قبلی حفظ می‌شود
     final k = _keyCtrl.text.trim().isEmpty ? _savedKey : _keyCtrl.text.trim();
+    String pick(String r) {
+      final t = _c[r]![_sel[r]!].text.trim();
+      return t;
+    }
+
+    for (final r in _roles) {
+      await AiSettings.saveList(
+          r.$1, _c[r.$1]!.map((e) => e.text).toList(), _sel[r.$1]!);
+    }
     await AiSettings.save(_urlCtrl.text, k,
-        chat: _chatCtrl.text, stt: _sttCtrl.text, tts: _ttsCtrl.text);
+        chat: pick('chat'), stt: pick('stt'), tts: pick('tts'));
     final s = await AiSettings.load();
     if (!mounted) return;
     setState(() {
@@ -69,7 +93,7 @@ class _SettingsPageState extends State<SettingsPage> {
         'تنظیمات ذخیره شد. طول کلید ذخیره‌شده ${_savedKey.length} نویسه است');
   }
 
-  Future<void> _test() async {
+  Future<void> _test([String role = 'chat']) async {
     await _store();
     setState(() {
       _testing = true;
@@ -77,8 +101,8 @@ class _SettingsPageState extends State<SettingsPage> {
     });
     String result;
     try {
-      await AiService(await AiSettings.load()).testKey();
-      result = 'کلید درست است و سرویس پاسخ داد';
+      await AiService(await AiSettings.load()).testModel(role);
+      result = 'آزمایش موفق بود. مدل انتخاب‌شده پاسخ داد';
     } catch (e) {
       await ErrorLog.add('آزمایش کلید', e);
       result = 'آزمایش انجام نشد. ${e.toString()}. آدرس و کلید را بررسی کنید';
@@ -88,6 +112,53 @@ class _SettingsPageState extends State<SettingsPage> {
       _testing = false;
       _status = result;
     });
+  }
+
+  Widget _group(String role, String title) {
+    final names = ['اول', 'دوم', 'سوم'];
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Semantics(
+            header: true,
+            child: Text('مدل $title',
+                style: Theme.of(context).textTheme.titleMedium),
+          ),
+          for (var i = 0; i < 3; i++)
+            Row(
+              children: [
+                Semantics(
+                  label: 'انتخاب مدل ${names[i]} برای $title',
+                  child: Radio<int>(
+                    value: i,
+                    groupValue: _sel[role],
+                    onChanged: _testing
+                        ? null
+                        : (v) {
+                            setState(() => _sel[role] = v!);
+                            _test(role);
+                          },
+                  ),
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: TextField(
+                      controller: _c[role]![i],
+                      decoration: InputDecoration(
+                        labelText: 'مدل ${names[i]} $title',
+                        border: const OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -130,30 +201,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
           const SizedBox(height: 12),
-          TextField(
-            controller: _chatCtrl,
-            decoration: const InputDecoration(
-              labelText: 'مدل پیش‌فرض ترجمه',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _sttCtrl,
-            decoration: const InputDecoration(
-              labelText: 'مدل تبدیل گفتار به متن',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _ttsCtrl,
-            decoration: const InputDecoration(
-              labelText: 'مدل ساخت صدا',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
+          for (final r in _roles) _group(r.$1, r.$2),
           Row(
             children: [
               Expanded(
@@ -165,7 +213,7 @@ class _SettingsPageState extends State<SettingsPage> {
               const SizedBox(width: 12),
               Expanded(
                 child: OutlinedButton(
-                  onPressed: _testing ? null : _test,
+                  onPressed: _testing ? null : () => _test(),
                   child: const Text('آزمایش کلید'),
                 ),
               ),
