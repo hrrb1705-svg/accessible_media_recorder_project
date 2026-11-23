@@ -16,7 +16,7 @@ class AiSettings {
       this.sttModel = defaultSttModel,
       this.ttsModel = defaultTtsModel]);
 
-  static const String defaultBaseUrl = 'https://api.gapgpt.app/v1';
+  static const String defaultBaseUrl = 'https://api.gapgpt.ir/v1';
   static const String defaultChatModel = 'gpt-4o-mini';
   static const String defaultSttModel = 'whisper-1';
   static const String defaultTtsModel = 'tts-1';
@@ -48,7 +48,8 @@ class AiSettings {
     }
 
     return AiSettings(
-      normalize(g('ai_base_url', defaultBaseUrl)),
+      normalize(g('ai_base_url', defaultBaseUrl)
+          .replaceAll('gapgpt.app', 'gapgpt.ir')),
       p.getString('ai_api_key')?.trim() ?? '',
       g('ai_chat_model', defaultChatModel),
       g('ai_stt_model', defaultSttModel),

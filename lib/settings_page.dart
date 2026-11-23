@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import 'ai_service.dart';
 
@@ -110,8 +111,31 @@ class _SettingsPageState extends State<SettingsPage> {
     if (!mounted) return;
     setState(() {
       _testing = false;
-      _status = result;
+      _status = result.startsWith('آزمایش موفق') ? result : '';
     });
+    if (_status.isEmpty) _showError(result);
+  }
+
+  void _showError(String msg) {
+    showDialog<void>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('خطا'),
+        content: SingleChildScrollView(child: SelectableText(msg)),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: msg));
+            },
+            child: const Text('کپی'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(c),
+            child: const Text('بستن'),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _group(String role, String title) {
@@ -131,6 +155,16 @@ class _SettingsPageState extends State<SettingsPage> {
               children: [
                 Semantics(
                   label: 'انتخاب مدل ${names[i]} برای $title',
+                  inMutuallyExclusiveGroup: true,
+                  checked: _sel[role] == i,
+                  button: true,
+                  excludeSemantics: true,
+                  onTap: _testing
+                      ? null
+                      : () {
+                          setState(() => _sel[role] = i);
+                          _test(role);
+                        },
                   child: Radio<int>(
                     value: i,
                     groupValue: _sel[role],

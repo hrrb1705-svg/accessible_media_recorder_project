@@ -1645,23 +1645,20 @@ class _ConvertTabState extends State<ConvertTab> {
             ],
           ),
           const SizedBox(height: 8),
+          if (_path != null)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('نام فایل: $_name'),
+                Text('نوع فایل: ${_typeName()}'),
+                Text('اندازه فایل: ${_fmtSize(_size)}'),
+              ],
+            ),
           Expanded(
             child: _path == null
                 ? const Center(child: Text('فایلی انتخاب نشده است'))
                 : ListView(
                     children: [
-                      Semantics(
-                        container: true,
-                        child: Text('نام فایل: $_name'),
-                      ),
-                      Semantics(
-                        container: true,
-                        child: Text('نوع فایل: ${_typeName()}'),
-                      ),
-                      Semantics(
-                        container: true,
-                        child: Text('اندازه فایل: ${_fmtSize(_size)}'),
-                      ),
                       const SizedBox(height: 8),
                       Semantics(
                         header: true,
