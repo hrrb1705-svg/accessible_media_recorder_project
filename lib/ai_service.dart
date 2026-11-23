@@ -171,17 +171,7 @@ class AiService {
           .timeout(const Duration(seconds: 40));
       _check(r);
     } else if (role == 'tts') {
-      final r = await http
-          .post(Uri.parse('${s.baseUrl}/audio/speech'),
-              headers: {..._auth, 'Content-Type': 'application/json'},
-              body: jsonEncode({
-                'model': s.ttsModel,
-                'voice': 'alloy',
-                'input': 'hi',
-                'response_format': 'mp3',
-              }))
-          .timeout(const Duration(seconds: 40));
-      _check(r);
+      await _tts(s, 'hi', const Duration(seconds: 40));
     } else {
       final r = await http
           .get(Uri.parse('${s.baseUrl}/models'), headers: _auth)
@@ -235,19 +225,24 @@ class AiService {
 
   /// ساخت صدای انگلیسی از متن و ذخیره در فایل خروجی
   Future<void> speak(String text, File out) async {
-    final r = await http
-        .post(
-          Uri.parse('${s.baseUrl}/audio/speech'),
-          headers: {..._auth, 'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'model': s.ttsModel,
-            'voice': 'alloy',
-            'input': text,
-            'response_format': 'mp3',
-          }),
-        )
-        .timeout(const Duration(minutes: 10));
-    _check(r);
+    final r = await _tts(s, text, const Duration(minutes: 10));
     await out.writeAsBytes(r.bodyBytes);
+  }
+
+  Future<http.Response> _tts(AiSettings s, String text, Duration t) async {
+    Future<http.Response> go(String f) => http
+        .post(Uri.parse('${s.baseUrl}/audio/speech'),
+            headers: {..._auth, 'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'model': s.ttsModel,
+              'voice': 'alloy',
+              'input': text,
+              'response_format': f,
+            }))
+        .timeout(t);
+    var r = await go('mp3');
+    if (r.statusCode == 400 && r.body.contains('wav')) r = await go('wav');
+    _check(r);
+    return r;
   }
 }

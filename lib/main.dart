@@ -1646,13 +1646,17 @@ class _ConvertTabState extends State<ConvertTab> {
           ),
           const SizedBox(height: 8),
           if (_path != null)
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('نام فایل: $_name'),
-                Text('نوع فایل: ${_typeName()}'),
-                Text('اندازه فایل: ${_fmtSize(_size)}'),
-              ],
+            Semantics(
+              container: true,
+              label:
+                  'نام فایل: $_name، نوع: ${_typeName()}، اندازه: ${_fmtSize(_size)}',
+              child: ExcludeSemantics(
+                child: Text(
+                  '$_name | ${_typeName()} | ${_fmtSize(_size)}',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             ),
           Expanded(
             child: _path == null

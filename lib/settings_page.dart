@@ -119,6 +119,8 @@ class _SettingsPageState extends State<SettingsPage> {
   void _showError(String msg) {
     showDialog<void>(
       context: context,
+      barrierDismissible: false,
+      barrierLabel: '',
       builder: (c) => AlertDialog(
         title: const Text('خطا'),
         content: SingleChildScrollView(child: SelectableText(msg)),
