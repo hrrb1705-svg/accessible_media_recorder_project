@@ -797,8 +797,14 @@ class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
     // دیگر کار نمی‌کردند چون پخش‌کننده در حالت پایان‌یافته گیر می‌کرد
     _player.onPlayerComplete.listen((_) async {
       if (_isVideo) return;
-      await _player.seek(Duration.zero);
-      await _player.pause();
+      // بعد از پایان، پخش‌کننده را دوباره به فایل وصل می‌کنیم تا پخش مجدد و پرش کار کند
+      if (_file != null) {
+        try {
+          await _player.stop();
+          await _player.setSource(DeviceFileSource(_file!));
+          await _player.seek(Duration.zero);
+        } catch (_) {}
+      }
       if (mounted) setState(() => _pos = Duration.zero);
     });
   }
@@ -961,8 +967,10 @@ class _EditTabState extends State<EditTab> with WidgetsBindingObserver {
     } else {
       if (_player.state == PlayerState.playing) {
         await _player.pause();
-      } else {
+      } else if (_player.state == PlayerState.paused) {
         await _player.resume();
+      } else if (_file != null) {
+        await _player.play(DeviceFileSource(_file!), position: _pos);
       }
     }
     if (mounted) setState(() {});
@@ -1422,6 +1430,12 @@ class _ConvertTabState extends State<ConvertTab> {
         'mp4',
         '-c:v libx264 -preset veryfast -crf 21 -c:a aac -b:a 160k -movflags +faststart',
         (d, s) => s * 0.55),
+    _ConvOption(
+        'ترجمه به انگلیسی با هوش مصنوعی (mp4، صدای ترجمه‌شده)',
+        'mp4',
+        '',
+        (d, s) => s * 0.4,
+        translate: true),
   ];
 
   List<_ConvOption> get _opts => _mode == 1 ? _videoOpts : _audioOpts;
@@ -1493,7 +1507,7 @@ class _ConvertTabState extends State<ConvertTab> {
     if (_path == null || _selected == null || _busy) return;
     final opt = _opts[_selected!];
     if (opt.translate) {
-      await _translateAudio();
+      await _translateAudio(video: _mode == 1);
       return;
     }
     final granted = await Permission.manageExternalStorage.request();
@@ -1535,7 +1549,7 @@ class _ConvertTabState extends State<ConvertTab> {
     }
   }
 
-  Future<void> _translateAudio() async {
+  Future<void> _translateAudio({bool video = false}) async {
     final settings = await AiSettings.load();
     if (settings.apiKey.isEmpty) {
       _snack('ابتدا در تنظیمات کلید API را وارد کنید');
@@ -1575,15 +1589,31 @@ class _ConvertTabState extends State<ConvertTab> {
       final en = buf.toString().trim();
       final folder = Directory('/storage/emulated/0/acc-rec');
       if (!await folder.exists()) await folder.create(recursive: true);
-      var destPath = '${folder.path}/${_baseName()}_en.mp3';
+      final ext = video ? 'mp4' : 'mp3';
+      var destPath = '${folder.path}/${_baseName()}_en.$ext';
       var n = 2;
       while (await File(destPath).exists()) {
-        destPath = '${folder.path}/${_baseName()}_en_$n.mp3';
+        destPath = '${folder.path}/${_baseName()}_en_$n.$ext';
         n++;
       }
       final speechTmp = '${tempDir.path}/tts_$ts.mp3';
       await ai.speak(en, File(speechTmp));
-      await File(speechTmp).copy(destPath);
+      if (video) {
+        // ویدیو اصلی با تصویر دست‌نخورده و صدای ترجمه‌شده جایگزین می‌شود
+        final muxTmp = '${tempDir.path}/mux_$ts.mp4';
+        final mux = await FFmpegKit.execute(
+            '-y -i "$_path" -i "$speechTmp" -map 0:v:0 -map 1:a:0 '
+            '-c:v copy -c:a aac -b:a 96k -shortest -movflags +faststart "$muxTmp"');
+        if (!ReturnCode.isSuccess(await mux.getReturnCode())) {
+          throw Exception('mux');
+        }
+        await File(muxTmp).copy(destPath);
+        try {
+          await File(muxTmp).delete();
+        } catch (_) {}
+      } else {
+        await File(speechTmp).copy(destPath);
+      }
       try {
         await File(speechTmp).delete();
         await small.delete();
