@@ -46,7 +46,11 @@ android {
     buildTypes {
         release {
             // اگر فایل کلید وجود نداشته باشد، با کلید دیباگ امضا می‌شود تا ساخت خطا ندهد
-            signingConfig (keystorePropertiesFile.exists() && file(keystoreProperties['storeFile']).exists()) ? signingConfigs.release : signingConfigs.debug
+            if (keystorePropertiesFile.exists()) {
+                signingConfig signingConfigs.release
+            } else {
+                signingConfig signingConfigs.debug
+            }
             minifyEnabled false
             shrinkResources false
         }
