@@ -24,6 +24,20 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze
         continue-on-error: true
+      - name: Prepare signing files
+        env:
+          KEYSTORE_B64: ${{ secrets.BNA_KEYSTORE_B64 }}
+          KS_PASS: ${{ secrets.BNA_KS_PASS }}
+          KEY_PASS: ${{ secrets.BNA_KEY_PASS }}
+          KEY_ALIAS: ${{ secrets.BNA_KEY_ALIAS }}
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > android/app/upload-keystore.jks
+          {
+            echo "storeFile=upload-keystore.jks"
+            echo "storePassword=$KS_PASS"
+            echo "keyPassword=$KEY_PASS"
+            echo "keyAlias=$KEY_ALIAS"
+          } > android/key.properties
       - run: flutter build apk --release
       - name: Prepare APK file
         run: |

@@ -4,6 +4,12 @@ plugins {
     id "dev.flutter.flutter-gradle-plugin"
 }
 
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+}
+
 android {
     namespace "com.example.accessible_media_recorder"
     compileSdk 36
@@ -28,18 +34,19 @@ android {
 
     signingConfigs {
         release {
-            storeFile file("upload-keystore.jks")
-            storeType "pkcs12"
-            storePassword "Hamidrezarahimi"
-            keyAlias "Hamidrezarahimi"
-            keyPassword "Hamidrezarahimi"
+            if (keystorePropertiesFile.exists()) {
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+                storeFile file(keystoreProperties['storeFile'])
+                storePassword keystoreProperties['storePassword']
+            }
         }
     }
 
     buildTypes {
         release {
             // اگر فایل کلید وجود نداشته باشد، با کلید دیباگ امضا می‌شود تا ساخت خطا ندهد
-            signingConfig file("upload-keystore.jks").exists() ? signingConfigs.release : signingConfigs.debug
+            signingConfig (keystorePropertiesFile.exists() && file(keystoreProperties['storeFile']).exists()) ? signingConfigs.release : signingConfigs.debug
             minifyEnabled false
             shrinkResources false
         }
